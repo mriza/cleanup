@@ -1,0 +1,14 @@
+directories:
+  - target_directory: "/home/atcs2/WORKER"
+    monitor_method: "size"            # pilihan: "size" atau "age"
+    max_size_bytes: 429496729600      # 400GB, hanya jika monitor_method = "size"
+    max_file_age_days: 15             # opsional, tetap dipakai untuk hapus file terlalu tua
+    remove: true                      # dry-run default
+
+  # - target_directory: "/home/kitagapai/data2"
+  #   monitor_method: "age"
+  #   max_file_age_days: 15             # hanya kalau monitor_method = "age"
+  #   max_depth: 3                      # hanya relevan untuk mode age
+  #   remove: true
+
+cleanup_interval_minutes: 60          # interval cek otomatis (jika penggunaan otomasi)
