@@ -3,8 +3,8 @@ directories:
     monitor_method: "size"            # pilihan: "size" atau "age"
     max_size_bytes: 429496729600      # 400GB, hanya jika monitor_method = "size"
     max_file_age_days: 15             # opsional, tetap dipakai untuk hapus file terlalu tua
-    remove: true                      # dry-run default
-
+    remove: true                      # True = Hapus file secara aktual, False = Dry-Run
+                                      # KOREKSI: Komentar ini sebelumnya salah
   # - target_directory: "/home/kitagapai/data2"
   #   monitor_method: "age"
   #   max_file_age_days: 15             # hanya kalau monitor_method = "age"

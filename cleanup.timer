@@ -2,11 +2,8 @@
 Description=Run cleanup.service periodically
 
 [Timer]
-# Jalankan 5 menit setelah boot
 OnBootSec=5min
-# Jalankan ulang setiap 1 jam
-OnUnitActiveSec=1h
-# Jika timer sempat mati, jalankan job yang terlewat saat boot
+OnCalendar=hourly
 Persistent=true
 
 [Install]

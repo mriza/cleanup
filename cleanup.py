@@ -4,10 +4,26 @@ import time
 import yaml
 import argparse
 import shutil
+import stat
 
 def load_config(path):
     with open(path, "r") as f:
         return yaml.safe_load(f)
+
+
+def rmtree_onerror(func, path, exc_info):
+    """Handler yang dipanggil oleh shutil.rmtree jika terjadi error."""
+    if not os.access(path, os.W_OK):
+        
+        try:
+            os.chmod(path, stat.S_IWUSR)
+            func(path)
+        except Exception as e:
+            
+            raise
+    else:
+        
+        raise
 
 def remove_dir_if_exceeds_depth(root_path, max_depth, remove_flag=True):
     removed_dirs = 0
@@ -17,17 +33,20 @@ def remove_dir_if_exceeds_depth(root_path, max_depth, remove_flag=True):
             depth = 0
         else:
             depth = rel_path.count(os.sep) + 1
+        
         if max_depth is not None and depth > max_depth:
             if remove_flag:
                 try:
-                    shutil.rmtree(dirpath)
+                    
+                    shutil.rmtree(dirpath, onerror=rmtree_onerror)
                     print(f"Removed subdirectory exceeding max_depth: {dirpath}")
                 except Exception as e:
                     print(f"Failed to remove directory {dirpath}: {e}")
             else:
                 print(f"[DRY-RUN] Would remove subdirectory exceeding max_depth: {dirpath}")
+            
             removed_dirs += 1
-            dirnames[:] = []
+            dirnames[:] = [] 
     return removed_dirs
 
 def fast_file_generator(path):
@@ -41,7 +60,7 @@ def fast_file_generator(path):
                 continue
 
 def fast_file_generator_with_depth(path, max_depth, remove_flag):
-    # Hapus subdir yang melebihi max_depth dulu
+    
     remove_dir_if_exceeds_depth(path, max_depth, remove_flag)
     for dirpath, _, filenames in os.walk(path):
         rel_path = os.path.relpath(dirpath, path)
@@ -49,8 +68,10 @@ def fast_file_generator_with_depth(path, max_depth, remove_flag):
             depth = 0
         else:
             depth = rel_path.count(os.sep) + 1
-        if depth > max_depth:
-            continue  # abaikan file di subdir yang terlalu dalam
+        
+        if max_depth is not None and depth > max_depth:
+            continue  
+            
         for f in filenames:
             try:
                 full = os.path.join(dirpath, f)
@@ -65,12 +86,12 @@ def remove_oldest_files_by_size(target_path, max_bytes, max_file_age_days, remov
     now = time.time()
 
     for mtime, size, path in fast_file_generator(target_path):
-        # Hanya masukkan file yang tidak terlalu tua
+        
         if (now - mtime) <= max_file_age_days * 86400:
             total_size += size
             heapq.heappush(heap, (mtime, size, path))
         else:
-            # File terlalu lama, bisa dihapus langsung
+            
             if remove_flag:
                 try:
                     os.remove(path)
@@ -104,6 +125,7 @@ def remove_old_files_by_age(target_path, max_days, max_depth, remove_flag=True):
     cutoff = now - max_days * 86400
     removed = 0
 
+    
     for mtime, size, path in fast_file_generator_with_depth(target_path, max_depth, remove_flag):
         if mtime < cutoff:
             if remove_flag:
@@ -140,11 +162,18 @@ def main():
         print(f"=== Processing {target_path} with method={monitor_method}, remove={remove_flag}, max_depth={max_depth} ===")
 
         if monitor_method == 'size':
-            # Abaikan max_depth, hapus file lama dulu
+            
+            if max_depth is not None:
+                print(f"Checking for subdirectories exceeding max_depth={max_depth} (in size mode).")
+                remove_dir_if_exceeds_depth(target_path, max_depth, remove_flag)
+                
+            
             remove_oldest_files_by_size(target_path, max_size_bytes, max_file_age_days, remove_flag)
+            
         elif monitor_method == 'age':
-            # Gunakan max_depth untuk hapus subdir dalam + hapus file lama
+            
             remove_old_files_by_age(target_path, max_file_age_days, max_depth, remove_flag)
+            
         else:
             print(f"Invalid monitor_method '{monitor_method}' for {target_path}. Use 'size' or 'age'.")
 
