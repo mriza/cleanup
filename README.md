@@ -100,12 +100,12 @@ Run all CLI commands as the `cleanupd` user.
 alias cleanup-config="sudo -u cleanupd /opt/cleanup/venv/bin/python /opt/cleanup/configure.py"
 ```
 
-    * cleanup-config list`: `Show` all currently monitored directories (from directories.d/).
-    * `cleanup-config add`: Interactively create a new .yaml file in directories.d/.
-    * `cleanup-config edit`: Interactively edit an existing .yaml file.
-    * `cleanup-config remove`: Remove an existing .yaml file.
-    * `cleanup-config metrics`: Show live dashboard metrics.
-    * `cleanup-config history --limit 5`: Show the summary of the last 5 cleanup runs.
+* `cleanup-config list`: Show all currently monitored directories (from directories.d/).
+* `cleanup-config add`: Interactively create a new .yaml file in directories.d/.
+* `cleanup-config edit`: Interactively edit an existing .yaml file.
+* `cleanup-config remove`: Remove an existing .yaml file.
+* `cleanup-config metrics`: Show live dashboard metrics.
+* `cleanup-config history --limit 5`: Show the summary of the last 5 cleanup runs.
 
 ## 📊 Monitoring (Logs)
 
