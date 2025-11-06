@@ -1,12 +1,13 @@
 [Unit]
 Description=Run indexer.service periodically (hourly)
+# Timer ini sekarang mengontrol service yang baru
+Requires=cleanupd-indexer.service
 
 [Timer]
-# Kalo baru boot, tunggu 1 menit baru jalanin
+# Nama unit yang akan dijalankan
+Unit=cleanupd-indexer.service
 OnBootSec=1min
-# Jalanin tiap jam (misal: 01:00, 02:00, 03:00)
 OnCalendar=hourly
-# Kasih jeda acak 5 menit (biar hemat resource)
 RandomizedDelaySec=5m
 Persistent=true
 

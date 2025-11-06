@@ -1,87 +1,141 @@
 #!/bin/bash
 
-# Pastikan script dijalankan sebagai root (sesuai permintaan)
+# This script must be run as root to create users and install services
 if [ "$EUID" -ne 0 ]; then
-  echo "⚠️ Script ini harus dijalankan sebagai root. Harap gunakan: sudo bash $0"
+  echo "⚠️ This script must be run as root. Please use: sudo bash $0"
   exit 1
 fi
 
-# --- KONFIGURASI JALUR ---
+# --- CONFIGURATION ---
 INSTALL_DIR="/opt/cleanup"
 SYSTEMD_DIR="/etc/systemd/system"
 VENV_DIR="${INSTALL_DIR}/venv"
+SERVICE_USER="cleanupd"
 
-echo "--- 🛠️ Setup Direktori dan Izin ---"
+echo "--- 🛠️ Setting up Service User and Directories ---"
+
+# Create a dedicated system user 'cleanupd'
+if ! id -u "${SERVICE_USER}" >/dev/null 2>&1; then
+    echo "Creating system user '${SERVICE_USER}'..."
+    sudo useradd -r -s /bin/false "${SERVICE_USER}"
+else
+    echo "System user '${SERVICE_USER}' already exists."
+fi
+
 mkdir -p "${INSTALL_DIR}"
-echo "Direktori instalasi dibuat di: ${INSTALL_DIR}"
+echo "Installation directory created at: ${INSTALL_DIR}"
 
-# 1. Salin SEMUA file program ke direktori instalasi
-# (Ini versi SEBELUM api.py)
-cp cleanup.py indexer.py \
-   cleanup.service cleanup.timer \
-   indexer.service indexer.timer \
-   config.yaml "${INSTALL_DIR}/"
-echo "File konfigurasi dan program (Indexer, Cleaner) disalin ke ${INSTALL_DIR}."
+# 1. Copy ALL program files (Using new cleanupd-* names)
+cp cleanup.py indexer.py configure.py api.py \
+   cleanupd-cleaner.service cleanupd-cleaner.timer \
+   cleanupd-indexer.service cleanupd-indexer.timer \
+   cleanupd-api.service \
+   config.yaml requirements.txt "${INSTALL_DIR}/"
+echo "Configuration and program files copied to ${INSTALL_DIR}."
 
-# 2. Hapus baris User/Group dari KEDUA file service (biar jalan sbg root)
-sed -i '/^User=/d' "${INSTALL_DIR}/cleanup.service"
-sed -i '/^Group=/d' "${INSTALL_DIR}/cleanup.service"
-sed -i '/^User=/d' "${INSTALL_DIR}/indexer.service"
-sed -i '/^Group=/d' "${INSTALL_DIR}/indexer.service"
-echo "Baris User/Group dihapus dari file .service."
+# 2. Set ownership
+chown root:root "${INSTALL_DIR}"
+mkdir -p "${VENV_DIR}"
+chown -R "${SERVICE_USER}":"${SERVICE_USER}" "${VENV_DIR}"
+chown "${SERVICE_USER}":"${SERVICE_USER}" "${INSTALL_DIR}"/*.py
+chown "${SERVICE_USER}":"${SERVICE_USER}" "${INSTALL_DIR}"/config.yaml
+chown "${SERVICE_USER}":"${SERVICE_USER}" "${INSTALL_DIR}"/requirements.txt
+echo "File ownership set to '${SERVICE_USER}'."
 
-# 3. Tetapkan kepemilikan ke root
-chown -R root:root "${INSTALL_DIR}"
-echo "Kepemilikan diatur ke root:root."
+# 3. Secure the API Secret Key
+CONFIG_FILE="${INSTALL_DIR}/config.yaml"
+DEFAULT_KEY="CHANGE_THIS_TO_A_VERY_LONG_RANDOM_SECRET_STRING"
+if grep -qF "$DEFAULT_KEY" "$CONFIG_FILE"; then
+    echo "Generating new random API_SECRET_KEY..."
+    # Generate a 32-byte (256-bit) random hex string
+    NEW_KEY=$(openssl rand -hex 32)
+    # Use sudo to write as the file owner
+    sudo -u "${SERVICE_USER}" sed -i "s|$DEFAULT_KEY|$NEW_KEY|g" "$CONFIG_FILE"
+    echo "API_SECRET_KEY has been randomized for security."
+else
+    echo "API_SECRET_KEY already set. Skipping generation."
+fi
 
-# --- 🐍 Setup Virtual Environment ---
-echo "--- 🐍 Setup Virtual Environment ---"
+# --- 🐍 Setting up Virtual Environment ---
+echo "--- 🐍 Setting up Virtual Environment ---"
+sudo -u "${SERVICE_USER}" /usr/bin/python3 -m venv "${VENV_DIR}"
+echo "Virtual Environment created in ${VENV_DIR}."
 
-# 4. Buat Virtual Environment di dalam /opt/cleanup
-/usr/bin/python3 -m venv "${VENV_DIR}"
-echo "Virtual Environment dibuat di ${VENV_DIR}."
-
-# 5. Aktifkan VENV dan instal dependensi (HANYA pyyaml)
 source "${VENV_DIR}/bin/activate"
-echo "Menginstal dependensi: pyyaml..."
-"${VENV_DIR}/bin/pip" install pyyaml
+echo "Installing dependencies from requirements.txt..."
+"${VENV_DIR}/bin/pip" install -r "${INSTALL_DIR}/requirements.txt"
 deactivate
-echo "Dependensi PyYAML diinstal."
+echo "Dependencies installed."
 
-# --- 🔗 Instalasi Systemd (Symlink) ---
-echo "--- 🔗 Instalasi Systemd ---"
+# --- 🔗 Installing Systemd (Symlink) ---
+echo "--- 🔗 Installing Systemd ---"
+# Remove old symlinks (using new names)
+rm -f "${SYSTEMD_DIR}/cleanupd-cleaner.service"
+rm -f "${SYSTEMD_DIR}/cleanupd-cleaner.timer"
+rm -f "${SYSTEMD_DIR}/cleanupd-indexer.service"
+rm -f "${SYSTEMD_DIR}/cleanupd-indexer.timer"
+rm -f "${SYSTEMD_DIR}/cleanupd-api.service"
 
-# 6. Hapus symlink lama (kalo ada)
-rm -f "${SYSTEMD_DIR}/cleanup.service"
-rm -f "${SYSTEMD_DIR}/cleanup.timer"
-rm -f "${SYSTEMD_DIR}/indexer.service"
-rm -f "${SYSTEMD_DIR}/indexer.timer"
+# Create all 5 Symlinks (using new names)
+ln -s "${INSTALL_DIR}/cleanupd-cleaner.service" "${SYSTEMD_DIR}/cleanupd-cleaner.service"
+ln -s "${INSTALL_DIR}/cleanupd-cleaner.timer" "${SYSTEMD_DIR}/cleanupd-cleaner.timer"
+ln -s "${INSTALL_DIR}/cleanupd-indexer.service" "${SYSTEMD_DIR}/cleanupd-indexer.service"
+ln -s "${INSTALL_DIR}/cleanupd-indexer.timer" "${SYSTEMD_DIR}/cleanupd-indexer.timer"
+ln -s "${INSTALL_DIR}/cleanupd-api.service" "${SYSTEMD_DIR}/cleanupd-api.service"
+echo "Systemd symlinks for cleanupd-* created."
 
-# 7. Buat 4 Symlink
-ln -s "${INSTALL_DIR}/cleanup.service" "${SYSTEMD_DIR}/cleanup.service"
-ln -s "${INSTALL_DIR}/cleanup.timer" "${SYSTEMD_DIR}/cleanup.timer"
-ln -s "${INSTALL_DIR}/indexer.service" "${SYSTEMD_DIR}/indexer.service"
-ln -s "${INSTALL_DIR}/indexer.timer" "${SYSTEMD_DIR}/indexer.timer"
-echo "Symlink Systemd untuk cleanup dan indexer dibuat."
-
-# 8. Muat ulang konfigurasi Systemd
+# 8. Reload Systemd daemon
 systemctl daemon-reload
-echo "Systemd daemon dimuat ulang."
+echo "Systemd daemon reloaded."
 
-# 9. Aktifkan dan mulai KEDUA timer
-systemctl enable cleanup.timer
-systemctl enable indexer.timer
-systemctl start cleanup.timer
-systemctl start indexer.timer
-echo "✅ Timer cleanup.timer dan indexer.timer diaktifkan dan dimulai."
+# 9. Enable and start ALL services/timers (using new names)
+systemctl enable cleanupd-cleaner.timer
+systemctl enable cleanupd-indexer.timer
+systemctl enable cleanupd-api.service # api.service (not timer) runs 24/7
 
-# --- 🎉 Verifikasi ---
-echo "--- 🎉 Verifikasi Status ---"
-echo "Status Indexer (Tahap 1):"
-systemctl status indexer.timer | grep -E "Active:|Loaded:|service"
+systemctl start cleanupd-cleaner.timer
+systemctl start cleanupd-indexer.timer
+systemctl start cleanupd-api.service
+echo "✅ Timers (cleaner, indexer) and Service (api) enabled and started."
+
+# --- 🪵 (NEW) Installing Logrotate ---
+echo "--- 🪵 Installing Logrotate ---"
+LOGROTATE_CONF="/etc/logrotate.d/cleanupd"
+cat << EOF > "${LOGROTATE_CONF}"
+/opt/cleanup/*.log {
+    daily
+    missingok
+    rotate 7
+    compress
+    delaycompress
+    notifempty
+    copytruncate
+    su ${SERVICE_USER} ${SERVICE_USER}
+}
+EOF
+echo "Logrotate config created at ${LOGROTATE_CONF} for any future *.log files."
+
+# --- 🎉 Verification & IMPORTANT NEXT STEPS ---
+echo "--- 🎉 Verifying Status ---"
+systemctl status cleanupd-indexer.timer | grep -E "Active:|Loaded:|service"
+systemctl status cleanupd-cleaner.timer | grep -E "Active:|Loaded:|service"
+systemctl status cleanupd-api.service | grep -E "Active:|Loaded:|Main PID"
 echo ""
-echo "Status Cleaner (Tahap 2):"
-systemctl status cleanup.timer | grep -E "Active:|Loaded:|service"
+echo "Installation complete. API is running on http://<server_ip>:8000"
+
+# --- 💡 New CLI Info ---
+echo "--- 💡 CLI Tool (Now an API Client) ---"
+echo "To manage the config, use:"
+echo "sudo -u ${SERVICE_USER} /opt/cleanup/venv/bin/python /opt/cleanup/configure.py --help"
 echo ""
-echo "Instalasi selesai. Semua file berada di ${INSTALL_DIR}."
-echo "Database akan dibuat di ${INSTALL_DIR}/cleanup_index.db"
+echo "--- 🔐 ACTION REQUIRED: Set Your Admin Password ---"
+echo "A default password hash is in config.yaml. CHANGE IT."
+echo "1. Generate a new hash:"
+echo "   sudo -u ${SERVICE_USER} /opt/cleanup/venv/bin/python /opt/cleanup/configure.py hash-password"
+echo "2. Copy the generated hash."
+echo "3. Paste it into /opt/cleanup/config.yaml, replacing the default 'api_admin_pass_hash'."
+echo "4. Restart the API service: sudo systemctl restart cleanupd-api.service"
+echo ""
+echo "--- ⚠️ ACTION REQUIRED: Grant Permissions ---"
+echo "Remember to grant '${SERVICE_USER}' permissions on your target directories!"
+echo "e.g., sudo setfacl -R -m u:${SERVICE_USER}:rwx /home/atcs2/WORKER"

@@ -1,0 +1,16 @@
+# Pinned dependencies for cleanup service
+
+# Core
+pyyaml==6.0.1
+
+# CLI
+typer==0.12.3
+
+# API Backend
+fastapi==0.111.0
+uvicorn[standard]==0.30.1
+passlib[bcrypt]==1.7.4
+python-jose[cryptography]==3.3.0
+
+# API Client (for CLI)
+httpx==0.27.0

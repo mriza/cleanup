@@ -1,14 +1,25 @@
+# Global configuration
+# These keys are read by all services
+db_path: /opt/cleanup/cleanup_index.db
+log_level: INFO # (DEBUG, INFO, WARNING, ERROR)
+
+# API service configuration
+# Read by api.py (to host) and configure.py (to connect)
+api_host: 0.0.0.0
+api_port: 8000
+api_admin_user: admin
+# Default password is 'changeme'.
+# USE 'configure.py hash-password' TO GENERATE A NEW HASH AND PASTE IT HERE.
+api_admin_pass_hash: $2b$12$Ea.Rhw0i/aGn.IF.o.f.FOjL3vQ6Sg.nF.yUoo2nCURIgYdD0cI.a
+api_secret_key: "CHANGE_THIS_TO_A_VERY_LONG_RANDOM_SECRET_STRING" # Used for JWT tokens
+api_token_expire_minutes: 60
+
+# Directories to monitor
+# Manage this list using the 'configure.py add/edit/remove' commands
 directories:
   - target_directory: "/home/atcs2/WORKER"
-    monitor_method: "size"            # pilihan: "size" atau "age"
-    max_size_bytes: 429496729600      # 400GB, hanya jika monitor_method = "size"
-    max_file_age_days: 15             # opsional, tetap dipakai untuk hapus file terlalu tua
-    remove: true                      # True = Hapus file secara aktual, False = Dry-Run
-                                      # KOREKSI: Komentar ini sebelumnya salah
-  # - target_directory: "/home/kitagapai/data2"
-  #   monitor_method: "age"
-  #   max_file_age_days: 15             # hanya kalau monitor_method = "age"
-  #   max_depth: 3                      # hanya relevan untuk mode age
-  #   remove: true
-
-cleanup_interval_minutes: 60          # interval cek otomatis (jika penggunaan otomasi)
+    monitor_method: "size"
+    max_size_bytes: 429496729600
+    max_file_age_days: 15
+    max_depth: 3
+    remove: true
