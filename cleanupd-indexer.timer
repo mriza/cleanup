@@ -1,10 +1,8 @@
 [Unit]
-Description=Run indexer.service periodically (hourly)
-# Timer ini sekarang mengontrol service yang baru
+Description=Run cleanupd-indexer.service periodically (hourly)
 Requires=cleanupd-indexer.service
 
 [Timer]
-# Nama unit yang akan dijalankan
 Unit=cleanupd-indexer.service
 OnBootSec=1min
 OnCalendar=hourly

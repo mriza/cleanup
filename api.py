@@ -11,9 +11,9 @@ import logging
 import sys
 from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional
-import uvicorn # Diimpor untuk __main__
+import uvicorn 
 
-import typer # Diperlukan untuk Pydantic
+import typer 
 from fastapi import FastAPI, HTTPException, Depends, status, Body
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel, Field, validator, ValidationError, Literal
@@ -22,10 +22,8 @@ from passlib.context import CryptContext
 
 # --- Konfigurasi Awal: Membaca config untuk setup ---
 CONFIG_PATH = "config.yaml"
-# (Path ini disediakan oleh systemd via RuntimeDirectory)
 PID_FILE_PATH = "/run/cleanupd/api.pid" 
 
-# Helper khusus untuk memuat config (dengan lock)
 def load_config_from_yaml(path):
     """Safely loads a YAML file using a shared read lock."""
     try:
@@ -35,12 +33,13 @@ def load_config_from_yaml(path):
             fcntl.flock(f, fcntl.LOCK_UN) # Release
             return config_data
     except Exception as e:
-        print(f"FATAL: Error loading config {path}: {e}", file=sys.stderr)
+        # PERBAIKAN: Gunakan sys.stderr.write
+        sys.stderr.write(f"FATAL: Error loading config {path}: {e}\n")
         sys.exit(1)
 
 GLOBAL_CONFIG = load_config_from_yaml(CONFIG_PATH)
 if not GLOBAL_CONFIG:
-    print(f"FATAL: {CONFIG_PATH} is empty or invalid. API cannot start.", file=sys.stderr)
+    sys.stderr.write(f"FATAL: {CONFIG_PATH} is empty or invalid. API cannot start.\n")
     sys.exit(1)
 
 # Ambil konfigurasi API dari config
@@ -54,10 +53,10 @@ DB_PATH = GLOBAL_CONFIG.get('db_path', 'cleanup_index.db')
 LOG_LEVEL = GLOBAL_CONFIG.get('log_level', 'INFO')
 
 if API_SECRET_KEY == 'DEFAULT_SECRET_CHANGE_ME' or not API_SECRET_KEY:
-    print("FATAL: api_secret_key has not been changed in config.yaml. API will not start.", file=sys.stderr)
+    sys.stderr.write("FATAL: api_secret_key has not been changed in config.yaml. API will not start.\n")
     sys.exit(1)
 if not API_ADMIN_PASS_HASH:
-    print("FATAL: api_admin_pass_hash is not set in config.yaml. API will not start.", file=sys.stderr)
+    sys.stderr.write("FATAL: api_admin_pass_hash is not set in config.yaml. API will not start.\n")
     sys.exit(1)
     
 # --- Setup Logging ---
@@ -65,7 +64,7 @@ level = logging.getLevelName(LOG_LEVEL.upper())
 logging.basicConfig(
     level=level,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[logging.StreamHandler(sys.stdout)] # Log ke stdout untuk systemd
+    handlers=[logging.StreamHandler(sys.stdout)] 
 )
 log = logging.getLogger(os.path.basename(__file__))
 log.setLevel(level)
@@ -81,10 +80,33 @@ app = FastAPI(
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 ALGORITHM = "HS256"
-PROTECTED_PATHS_ABS = [os.path.abspath(p) for p in [
-    '/', '/etc', '/usr', '/var', '/lib', '/sbin', '/bin', '/root',
+
+# PERBAIKAN (Poin 1): Daftar path yang dilindungi (TANPA '/')
+PROTECTED_PATHS_ABS = [os.path.normpath(os.path.abspath(p)) for p in [
+    '/etc', '/usr', '/var', '/lib', '/sbin', '/bin', '/root',
     '/boot', '/dev', '/proc', '/sys', '/run'
 ]]
+
+# PERBAIKAN (Poin 1): Logika Pengecekan Path yang Benar
+def is_path_protected(target_path: str) -> bool:
+    """Checks if target_path is OR is INSIDE a protected path."""
+    try:
+        abs_target_path = os.path.normpath(os.path.abspath(target_path))
+    except ValueError:
+        return True # Path tidak valid
+
+    # 1. Cek terpisah untuk '/'
+    if abs_target_path == os.path.normpath('/'):
+        return True
+        
+    # 2. Cek apakah path ADALAH atau DI DALAM path yang dilindungi
+    for protected in PROTECTED_PATHS_ABS:
+        if abs_target_path == protected:
+            return True
+        # Pastikan kita menambahkan pemisah (separator) agar /var-log tidak cocok dengan /var
+        if abs_target_path.startswith(protected + os.sep):
+            return True
+    return False
 
 # --- Model Data (Pydantic) untuk Validasi ---
 class DirectoryConfig(BaseModel):
@@ -97,10 +119,9 @@ class DirectoryConfig(BaseModel):
 
     @validator('target_directory')
     def validate_target_path(cls, v):
-        abs_target_path = os.path.abspath(v)
-        for protected in PROTECTED_PATHS_ABS:
-            if os.path.commonpath([abs_target_path, protected]) == protected:
-                raise ValueError(f"Target path '{v}' (to {abs_target_path}) is forbidden.")
+        # PERBAIKAN (Poin 1): Gunakan fungsi is_path_protected yang baru
+        if is_path_protected(v):
+            raise ValueError(f"Target path '{v}' is forbidden (is or is inside a system directory).")
         return v
     
     @validator('max_size_bytes')
@@ -167,17 +188,22 @@ def startup_event():
     """Saat startup: buat PID lock file."""
     log.info("API service starting up...")
     try:
-        # Tulis PID file dengan exclusive lock
+        # PERBAIKAN: Pastikan direktori /run/cleanupd ada
+        os.makedirs(os.path.dirname(PID_FILE_PATH), 0o755, exist_ok=True)
+        
         pid_f = open(PID_FILE_PATH, 'w')
         fcntl.flock(pid_f, fcntl.LOCK_EX | fcntl.LOCK_NB)
         pid_f.write(str(os.getpid()))
         pid_f.flush()
-        # Simpan file handle agar lock-nya bertahan
         app.state.pid_file = pid_f
         log.info(f"Lock acquired ({PID_FILE_PATH}). API is running.")
     except (IOError, BlockingIOError):
         log.warning(f"Another instance is already running. Lock file {PID_FILE_PATH} is held. Exiting.")
-        sys.exit(1) # Keluar jika sudah ada yg jalan
+        sys.exit(1)
+    except Exception as e:
+        log.critical(f"Failed to create PID lock {PID_FILE_PATH}: {e}")
+        sys.exit(1)
+
 
 @app.on_event("shutdown")
 def shutdown_event():
@@ -246,7 +272,6 @@ async def get_metrics(user: str = Depends(get_current_user)):
         "directory_stats": []
     }
 
-    # 1. Statistik dari Database Indeks (Kondisi Saat Ini)
     try:
         db_mtime = os.path.getmtime(DB_PATH)
         metrics['index_stats']['last_updated_timestamp'] = db_mtime
@@ -262,7 +287,6 @@ async def get_metrics(user: str = Depends(get_current_user)):
     except Exception as e:
         metrics['index_stats']['error'] = f"Failed to read DB: {e}"
 
-    # 2. Statistik Disk Usage
     config = load_config_from_yaml(CONFIG_PATH)
     for dir_conf in config.get('directories', []):
         path = dir_conf.get('target_directory')
@@ -286,7 +310,7 @@ async def get_history(limit: int = 50, user: str = Depends(get_current_user)):
     history = []
     try:
         with sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True) as conn:
-            conn.row_factory = sqlite3.Row # Akses via nama kolom
+            conn.row_factory = sqlite3.Row 
             cursor = conn.cursor()
             cursor.execute("SELECT * FROM cleanup_history ORDER BY run_timestamp DESC LIMIT ?", (limit,))
             rows = cursor.fetchall()
@@ -302,7 +326,7 @@ async def get_history(limit: int = 50, user: str = Depends(get_current_user)):
     return {"history": history}
 
 if __name__ == "__main__":
-    # Pastikan skrip dijalankan dari direktori yang benar
+    # PERBAIKAN: Pindahkan chdir ke atas agar path config relatif juga aman
     os.chdir(os.path.dirname(os.path.abspath(__file__)))
     log.info(f"Starting API server on {API_HOST}:{API_PORT}...")
-    uvicorn.run(app, host=API_HOST, port=API_PORT)
+    uvicorn.run("api:app", host=API_HOST, port=API_PORT)

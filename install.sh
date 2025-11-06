@@ -44,13 +44,14 @@ echo "File ownership set to '${SERVICE_USER}'."
 
 # 3. Secure the API Secret Key
 CONFIG_FILE="${INSTALL_DIR}/config.yaml"
-DEFAULT_KEY="CHANGE_THIS_TO_A_VERY_LONG_RANDOM_SECRET_STRING"
+# PERBAIKAN: Pola string ini sekarang cocok dengan config.yaml (termasuk tanda kutip)
+DEFAULT_KEY="api_secret_key: \"CHANGE_THIS_TO_A_VERY_LONG_RANDOM_SECRET_STRING\""
+
 if grep -qF "$DEFAULT_KEY" "$CONFIG_FILE"; then
     echo "Generating new random API_SECRET_KEY..."
-    # Generate a 32-byte (256-bit) random hex string
     NEW_KEY=$(openssl rand -hex 32)
-    # Use sudo to write as the file owner
-    sudo -u "${SERVICE_USER}" sed -i "s|$DEFAULT_KEY|$NEW_KEY|g" "$CONFIG_FILE"
+    # Gunakan sudo -u untuk menulis sebagai pemilik file (cleanupd)
+    sudo -u "${SERVICE_USER}" sed -i "s|$DEFAULT_KEY|api_secret_key: \"$NEW_KEY\"|g" "$CONFIG_FILE"
     echo "API_SECRET_KEY has been randomized for security."
 else
     echo "API_SECRET_KEY already set. Skipping generation."
@@ -69,14 +70,14 @@ echo "Dependencies installed."
 
 # --- 🔗 Installing Systemd (Symlink) ---
 echo "--- 🔗 Installing Systemd ---"
-# Remove old symlinks (using new names)
+# Remove old symlinks
 rm -f "${SYSTEMD_DIR}/cleanupd-cleaner.service"
 rm -f "${SYSTEMD_DIR}/cleanupd-cleaner.timer"
 rm -f "${SYSTEMD_DIR}/cleanupd-indexer.service"
 rm -f "${SYSTEMD_DIR}/cleanupd-indexer.timer"
 rm -f "${SYSTEMD_DIR}/cleanupd-api.service"
 
-# Create all 5 Symlinks (using new names)
+# Create all 5 Symlinks
 ln -s "${INSTALL_DIR}/cleanupd-cleaner.service" "${SYSTEMD_DIR}/cleanupd-cleaner.service"
 ln -s "${INSTALL_DIR}/cleanupd-cleaner.timer" "${SYSTEMD_DIR}/cleanupd-cleaner.timer"
 ln -s "${INSTALL_DIR}/cleanupd-indexer.service" "${SYSTEMD_DIR}/cleanupd-indexer.service"
@@ -88,20 +89,22 @@ echo "Systemd symlinks for cleanupd-* created."
 systemctl daemon-reload
 echo "Systemd daemon reloaded."
 
-# 9. Enable and start ALL services/timers (using new names)
+# 9. Enable and start ALL services/timers
 systemctl enable cleanupd-cleaner.timer
 systemctl enable cleanupd-indexer.timer
-systemctl enable cleanupd-api.service # api.service (not timer) runs 24/7
+systemctl enable cleanupd-api.service 
 
 systemctl start cleanupd-cleaner.timer
 systemctl start cleanupd-indexer.timer
 systemctl start cleanupd-api.service
 echo "✅ Timers (cleaner, indexer) and Service (api) enabled and started."
 
-# --- 🪵 (NEW) Installing Logrotate ---
+# --- 🪵 Installing Logrotate ---
 echo "--- 🪵 Installing Logrotate ---"
 LOGROTATE_CONF="/etc/logrotate.d/cleanupd"
 cat << EOF > "${LOGROTATE_CONF}"
+# Logrotate config for any *.log files in /opt/cleanup
+# (Saat ini tidak ada, tapi bagus untuk masa depan)
 /opt/cleanup/*.log {
     daily
     missingok
@@ -113,7 +116,7 @@ cat << EOF > "${LOGROTATE_CONF}"
     su ${SERVICE_USER} ${SERVICE_USER}
 }
 EOF
-echo "Logrotate config created at ${LOGROTATE_CONF} for any future *.log files."
+echo "Logrotate config created at ${LOGROTATE_CONF}."
 
 # --- 🎉 Verification & IMPORTANT NEXT STEPS ---
 echo "--- 🎉 Verifying Status ---"

@@ -10,25 +10,49 @@ import sys
 import fcntl
 import re
 import httpx
+import time # PERBAIKAN (Poin 2): Import time
 from typing import Optional, List, Dict, Any
-from passlib.context import CryptContext # Untuk hash-password
+from passlib.context import CryptContext 
 
 # --- KONFIGURASI GLOBAL ---
 CONFIG_PATH = "config.yaml"
-# Konteks Hashing (harus sama dengan api.py)
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-# Inisialisasi Typer
 app = typer.Typer(
     help="A CLI tool to manage the cleanup service via its API."
 )
 
 # --- FUNGSI HELPER (Aman & Terkunci) ---
+
+# PERBAIKAN (Poin 1): Daftar path yang dilindungi (TANPA '/')
+PROTECTED_PATHS_ABS = [os.path.normpath(os.path.abspath(p)) for p in [
+    '/etc', '/usr', '/var', '/lib', '/sbin', '/bin', '/root',
+    '/boot', '/dev', '/proc', '/sys', '/run'
+]]
+
+# PERBAIKAN (Poin 1): Logika Pengecekan Path yang Benar
+def is_path_protected(target_path: str) -> bool:
+    """Checks if target_path is OR is INSIDE a protected path."""
+    try:
+        abs_target_path = os.path.normpath(os.path.abspath(target_path))
+    except ValueError:
+        return True 
+
+    if abs_target_path == os.path.normpath('/'):
+        return True
+        
+    for protected in PROTECTED_PATHS_ABS:
+        if abs_target_path == protected:
+            return True
+        if abs_target_path.startswith(protected + os.sep):
+            return True
+    return False
+
 def load_connection_config() -> Dict[str, Any]:
     """Hanya membaca config.yaml untuk info koneksi API (read-only, shared lock)."""
     try:
         with open(CONFIG_PATH, 'r') as f:
-            # Perbaikan: Tambahkan read lock untuk konsistensi
+            # PERBAIKAN: Tambahkan read lock untuk konsistensi
             fcntl.flock(f, fcntl.LOCK_SH)
             config_data = yaml.safe_load(f)
             fcntl.flock(f, fcntl.LOCK_UN)
@@ -60,7 +84,7 @@ class ApiClient:
                 if response.status_code == 401:
                     typer.secho("Authentication failed. Incorrect username or password.", fg=typer.colors.RED)
                     raise typer.Exit(code=1)
-                response.raise_for_status() # Gagal jika error 500, dll.
+                response.raise_for_status()
                 self.token = response.json()["access_token"]
                 typer.secho("Login successful, token acquired.", fg=typer.colors.GREEN, dim=True)
         except httpx.ConnectError:
@@ -137,23 +161,14 @@ def human_readable_size(size: int, default_val="N/A") -> str:
         i += 1
     return f"{size:.1f} {units[i]}"
 
-PROTECTED_PATHS_ABS = [os.path.abspath(p) for p in [
-    '/', '/etc', '/usr', '/var', '/lib', '/sbin', '/bin', '/root',
-    '/boot', '/dev', '/proc', '/sys', '/run'
-]]
-def is_path_protected(target_path: str) -> bool:
-    abs_target_path = os.path.abspath(target_path)
-    for protected in PROTECTED_PATHS_ABS:
-        if os.path.commonpath([abs_target_path, protected]) == protected:
-            return True
-    return False
-
 def _ask_for_dir_details(defaults: Dict[str, Any] = None) -> Dict[str, Any]:
     if defaults is None: defaults = {}
     typer.secho("--- Enter Directory Details ---", fg=typer.colors.CYAN)
     while True:
         default_path = defaults.get('target_directory', "/home/user")
         target_dir = typer.prompt("Target directory path", default=default_path)
+        
+        # PERBAIKAN (Poin 1): Gunakan cek path yang baru
         if is_path_protected(target_dir):
             typer.secho(f"ERROR: Path '{target_dir}' is inside a protected system directory! Forbidden.", fg=typer.colors.RED)
         elif not os.path.isdir(os.path.abspath(target_dir)):
@@ -314,8 +329,13 @@ def get_metrics(ctx: typer.Context):
     else:
         typer.echo(f"Total Files Indexed : {istats.get('total_files')}")
         typer.echo(f"Total Size Indexed  : {human_readable_size(istats.get('total_size_bytes'))}")
-        last_upd = time.ctime(istats.get('last_updated_timestamp', 0))
-        typer.echo(f"Index Last Updated  : {last_upd}")
+        # PERBAIKAN (Poin 2): Cek jika timestamp ada
+        ts = istats.get('last_updated_timestamp')
+        if ts:
+            typer.echo(f"Index Last Updated  : {time.ctime(ts)}")
+        else:
+            typer.echo("Index Last Updated  : Never")
+
 
     typer.secho("\n--- Monitored Directory Disk Usage ---", fg=typer.colors.CYAN, bold=True)
     dstats = data.get('directory_stats', [])
@@ -345,14 +365,14 @@ def get_history(
 
     typer.secho("\n--- Recent Cleanup History ---", fg=typer.colors.CYAN, bold=True)
     for run in history:
-        ts = run.get('run_timestamp').replace('T', ' ') # Format
-        typer.secho(f"[{ts}] {run.get('target_directory')}", bold=True)
+        ts_str = run.get('run_timestamp', 'unknown').split('.')[0].replace('T', ' ')
+        typer.secho(f"[{ts_str}] {run.get('target_directory')}", bold=True)
         
         status = run.get('status')
         if status == 'success': color = typer.colors.GREEN
         elif status == 'dry_run': color = typer.colors.BLUE
         else: color = typer.colors.RED
-        typer.secho(f"  Status: {status.upper()}", fg=color, bold=True)
+        typer.secho(f"  Status: {str(status).upper()}", fg=color, bold=True)
 
         typer.echo(f"  Message : {run.get('message')}")
         typer.echo(f"  Removed : {run.get('files_removed_by_age', 0)} (age) + {run.get('files_removed_by_size', 0)} (size) files")
@@ -360,6 +380,6 @@ def get_history(
         typer.echo("-" * 20)
 
 if __name__ == "__main__":
-    # Set working directory to the script's location
+    # PERBAIKAN: Set CWD ke lokasi skrip
     os.chdir(os.path.dirname(os.path.abspath(__file__)))
     app()

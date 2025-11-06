@@ -14,8 +14,9 @@ import logging
 import fcntl # For PID locking
 
 # --- GLOBAL CONFIGURATION ---
-PROTECTED_PATHS_ABS = [os.path.abspath(p) for p in [
-    '/', '/etc', '/usr', '/var', '/lib', '/sbin', '/bin', '/root',
+# PERBAIKAN (Poin 1): Daftar path yang dilindungi (TANPA '/')
+PROTECTED_PATHS_ABS = [os.path.normpath(os.path.abspath(p)) for p in [
+    '/etc', '/usr', '/var', '/lib', '/sbin', '/bin', '/root',
     '/boot', '/dev', '/proc', '/sys', '/run'
 ]]
 PID_FILE_PATH = "/run/cleanupd/indexer.pid"
@@ -34,7 +35,7 @@ def load_config_from_yaml(path):
             fcntl.flock(f, fcntl.LOCK_UN) # Release
             return config_data
     except Exception as e:
-        print(f"FATAL: Error loading config {path} before logging setup: {e}", file=sys.stderr)
+        sys.stderr.write(f"FATAL: Error loading config {path} before logging setup: {e}\n")
         sys.exit(1)
 
 def setup_logging(level_name: str):
@@ -50,11 +51,21 @@ def setup_logging(level_name: str):
     )
     log.setLevel(level)
 
+# PERBAIKAN (Poin 1): Logika Pengecekan Path yang Benar
 def is_path_protected(target_path: str) -> bool:
-    """Checks if target_path is INSIDE a protected path."""
-    abs_target_path = os.path.abspath(target_path)
+    """Checks if target_path is OR is INSIDE a protected path."""
+    try:
+        abs_target_path = os.path.normpath(os.path.abspath(target_path))
+    except ValueError:
+        return True # Path tidak valid
+
+    if abs_target_path == os.path.normpath('/'):
+        return True
+        
     for protected in PROTECTED_PATHS_ABS:
-        if os.path.commonpath([abs_target_path, protected]) == protected:
+        if abs_target_path == protected:
+            return True
+        if abs_target_path.startswith(protected + os.sep):
             return True
     return False
 
@@ -157,7 +168,6 @@ def initialize_database(db_path):
         except Exception as e:
             log.error(f"Could not set WAL mode: {e}")
         
-        # Table 1: File Index
         cursor.execute("""
         CREATE TABLE IF NOT EXISTS file_index (
             target_directory TEXT,
@@ -167,7 +177,6 @@ def initialize_database(db_path):
         )
         """)
         
-        # Table 2: Aggregate History Log
         cursor.execute("""
         CREATE TABLE IF NOT EXISTS cleanup_history (
             run_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -195,6 +204,7 @@ def run_indexing(target_path, max_depth, db_path):
             yield (target_path, path, mtime, size)
 
     try:
+        # Transaksi 'with' ini sudah atomik
         with sqlite3.connect(db_path, timeout=300) as conn:
             cursor = conn.cursor()
             cursor.execute("DELETE FROM file_index WHERE target_directory = ?", (target_path,))
@@ -222,11 +232,18 @@ def run_main_logic(config: dict, db_path: str):
     log.info(f"--- Starting Indexing Session ---")
     for dir_config in directories_to_process:
         target_path = dir_config.get('target_directory')
-        if not target_path or not os.path.isdir(target_path):
-            log.warning(f"Skipping. 'target_directory' is invalid: {target_path}"); continue
+        if not target_path:
+            log.warning("Skipping entry with no 'target_directory'."); continue
+        
+        try:
+            if not os.path.isdir(target_path):
+                log.warning(f"Skipping. 'target_directory' is not a valid directory: {target_path}"); continue
+        except Exception as e:
+            log.warning(f"Skipping. Could not access 'target_directory' {target_path}: {e}"); continue
             
+        # PERBAIKAN (Poin 1): Gunakan cek path yang baru
         if is_path_protected(target_path):
-            log.critical(f"FATAL: Target '{target_path}' is in or IS a forbidden system path. Halting!"); sys.exit(1)
+            log.error(f"SKIPPING: Target '{target_path}' is in or IS a forbidden system path. Will not process."); continue
             
         max_depth = dir_config.get('max_depth', None) 
         is_dry_run = not dir_config.get('remove', False)
@@ -241,19 +258,24 @@ def run_main_logic(config: dict, db_path: str):
     log.info(f"--- Indexing Session Finished ---")
 
 if __name__ == "__main__":
-    # --- PRE-MAIN: Load Config for Logging/DB Path ---
     parser = argparse.ArgumentParser(description="File indexing script for cleanup service")
-    parser.add_argument('--config', default='/opt/cleanup/config.yaml', help='Path to config.yaml')
+    parser.add_argument('--config', default='config.yaml', help='Path to config.yaml')
     args = parser.parse_args()
+    
+    # PERBAIKAN: Set CWD ke lokasi skrip
+    os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
     config = load_config_from_yaml(args.config)
     
     log_level = config.get('log_level', 'INFO')
-    db_path = config.get('db_path', '/opt/cleanup/cleanup_index.db')
+    # PERBAIKAN: Gunakan path absolut untuk DB agar CWD tidak masalah
+    db_path = os.path.abspath(config.get('db_path', 'cleanup_index.db'))
     setup_logging(log_level)
 
     # --- PID LOCK ---
     try:
+        # PERBAIKAN: Pastikan direktori /run/cleanupd ada
+        os.makedirs(os.path.dirname(PID_FILE_PATH), 0o755, exist_ok=True)
         lock_f = open(PID_FILE_PATH, 'w')
         fcntl.flock(lock_f, fcntl.LOCK_EX | fcntl.LOCK_NB)
         log.info(f"Lock acquired ({PID_FILE_PATH}). Starting.")
@@ -262,6 +284,9 @@ if __name__ == "__main__":
     except (IOError, BlockingIOError):
         log.warning(f"Another instance is already running. Lock file {PID_FILE_PATH} is held. Exiting.")
         sys.exit(0)
+    except Exception as e:
+        log.critical(f"Failed to create PID lock {PID_FILE_PATH}: {e}")
+        sys.exit(1)
 
     # --- MAIN EXECUTION ---
     try:

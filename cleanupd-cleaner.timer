@@ -1,10 +1,8 @@
 [Unit]
-Description=Run cleanup.service periodically (30 mins past the hour)
-# Timer ini sekarang mengontrol service yang baru
+Description=Run cleanupd-cleaner.service periodically (30 mins past the hour)
 Requires=cleanupd-cleaner.service
 
 [Timer]
-# Nama unit yang akan dijalankan
 Unit=cleanupd-cleaner.service
 OnBootSec=15min
 OnCalendar=*:30

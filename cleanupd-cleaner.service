@@ -13,7 +13,7 @@ Environment=PATH=/opt/cleanup/venv/bin:/usr/bin:/bin
 ExecStart=/opt/cleanup/venv/bin/python /opt/cleanup/cleanup.py --config /opt/cleanup/config.yaml
 Restart=on-failure
 WorkingDirectory=/opt/cleanup
-# Creates /run/cleanupd for pid files
+# Creates /run/cleanupd for pid files, owned by 'cleanupd'
 RuntimeDirectory=cleanupd
 
 [Install]
