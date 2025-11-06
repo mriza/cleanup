@@ -1,0 +1,14 @@
+[Unit]
+Description=Run indexer.service periodically (hourly)
+
+[Timer]
+# Kalo baru boot, tunggu 1 menit baru jalanin
+OnBootSec=1min
+# Jalanin tiap jam (misal: 01:00, 02:00, 03:00)
+OnCalendar=hourly
+# Kasih jeda acak 5 menit (biar hemat resource)
+RandomizedDelaySec=5m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

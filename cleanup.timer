@@ -1,9 +1,13 @@
 [Unit]
-Description=Run cleanup.service periodically
+Description=Run cleanup.service periodically (30 mins past the hour)
 
 [Timer]
-OnBootSec=5min
-OnCalendar=hourly
+# Kalo baru boot, tunggu 15 menit (biar indexer-nya pasti udah beres)
+OnBootSec=15min
+# Jalanin tiap jam, di menit ke-30 (misal: 01:30, 02:30)
+OnCalendar=*:30
+# Kasih jeda acak juga
+RandomizedDelaySec=5m
 Persistent=true
 
 [Install]
