@@ -1,0 +1,553 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full bg-gray-100">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cleanup Service Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        input[type='number']::-webkit-inner-spin-button,
+        input[type='number']::-webkit-outer-spin-button {
+            -webkit-appearance: none; margin: 0;
+        }
+        input[type='number'] { -moz-appearance: textfield; }
+    </style>
+</head>
+<body class="h-full">
+
+    <div id="login-view" class="flex min-h-full flex-col justify-center px-6 py-12 lg:px-8">
+        <div class="sm:mx-auto sm:w-full sm:max-w-sm">
+            <h2 class="mt-10 text-center text-2xl font-bold leading-9 tracking-tight text-gray-900">Sign in to Cleanup Dashboard</h2>
+        </div>
+        <div class="mt-10 sm:mx-auto sm:w-full sm:max-w-sm">
+            <div class="space-y-6">
+                <div>
+                    <label for="username" class="block text-sm font-medium leading-6 text-gray-900">Username</label>
+                    <input id="username" name="username" type="text" value="admin" required class="block w-full rounded-md border-0 py-1.5 text-gray-900 shadow-sm ring-1 ring-inset ring-gray-300 px-2">
+                </div>
+                <div>
+                    <label for="password" class="block text-sm font-medium leading-6 text-gray-900">Password</label>
+                    <input id="password" name="password" type="password" autocomplete="current-password" required class="block w-full rounded-md border-0 py-1.5 text-gray-900 shadow-sm ring-1 ring-inset ring-gray-300 px-2">
+                </div>
+                <div id="login-error" class="text-sm text-red-600 hidden"></div>
+                <button id="login-button" class="flex w-full justify-center rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-semibold text-white shadow-sm hover:bg-indigo-500">Sign in</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="dashboard-view" class="hidden">
+        <header class="bg-white shadow-sm">
+            <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+                <div class="flex h-16 justify-between">
+                    <div class="flex items-center"><h1 class="text-xl font-bold text-indigo-600">Cleanup Dashboard</h1></div>
+                    <div class="flex items-center">
+                        <button id="refresh-all-button" class="rounded-md bg-green-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-green-500 mr-4">Refresh Data</button>
+                        <button id="logout-button" type="button" class="rounded-md bg-red-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-red-500">Logout</button>
+                    </div>
+                </div>
+            </div>
+        </header>
+
+        <main class="py-10">
+            <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+                <h2 class="text-lg font-medium leading-6 text-gray-900">Live Metrics</h2>
+                <div id="metrics-content" class="mt-2 grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4"></div>
+
+                <div class="mt-8 sm:flex sm:items-center">
+                    <div class="sm:flex-auto"><h2 class="text-lg font-medium leading-6 text-gray-900">Monitored Directories</h2></div>
+                    <div class="mt-4 sm:ml-16 sm:mt-0 sm:flex-none">
+                        <button id="add-dir-button" type="button" class="block rounded-md bg-indigo-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-500">Add directory</button>
+                    </div>
+                </div>
+                <div id="config-content" class="mt-4 flow-root"></div>
+                
+                <h2 class="mt-8 text-lg font-medium leading-6 text-gray-900">Recent Cleanup History (Last 10 Runs)</h2>
+                <div id="history-content" class="mt-4 flow-root"></div>
+            </div>
+        </main>
+    </div>
+
+    <div id="modal" class="relative z-10 hidden" aria-labelledby="modal-title" role="dialog" aria-modal="true">
+        <div class="fixed inset-0 bg-gray-500 bg-opacity-75"></div>
+        <div class="fixed inset-0 z-10 w-screen overflow-y-auto">
+            <div class="flex min-h-full items-end justify-center p-4 text-center sm:items-center sm:p-0">
+                <div class="relative transform overflow-hidden rounded-lg bg-white text-left shadow-xl sm:my-8 sm:w-full sm:max-w-lg">
+                    <div class="bg-white px-4 pb-4 pt-5 sm:p-6 sm:pb-4">
+                        <h3 class="text-lg font-semibold leading-6 text-gray-900" id="modal-title">Add New Directory</h3>
+                        <div id="modal-error" class="text-sm text-red-600 hidden mt-2"></div>
+                        <div class="mt-4 grid grid-cols-1 gap-y-4 sm:grid-cols-2 sm:gap-x-4">
+                            
+                            <div class="sm:col-span-2">
+                                <label for="modal-filename" class="block text-sm font-medium text-gray-700">Config Filename (e.g., worker.yaml)</label>
+                                <input type="text" id="modal-filename" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm px-2 py-1.5 ring-1 ring-inset ring-gray-300">
+                            </div>
+                            
+                            <div class="sm:col-span-2">
+                                <label for="modal-path" class="block text-sm font-medium text-gray-700">Target Path</label>
+                                <input type="text" id="modal-path" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm px-2 py-1.5 ring-1 ring-inset ring-gray-300">
+                            </div>
+                            
+                            <div>
+                                <label for="modal-method" class="block text-sm font-medium text-gray-700">Method</label>
+                                <select id="modal-method" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm px-2 py-1.5 ring-1 ring-inset ring-gray-300">
+                                    <option value="size">Size</option>
+                                    <option value="age">Age</option>
+                                </select>
+                            </div>
+                            
+                            <div>
+                                <label for="modal-age" class="block text-sm font-medium text-gray-700">Max File Age (Days)</label>
+                                <input type="number" id="modal-age" value="30" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm px-2 py-1.5 ring-1 ring-inset ring-gray-300">
+                            </div>
+
+                            <div id="modal-size-group">
+                                <label for="modal-size" class="block text-sm font-medium text-gray-700">Max Size (e.g., 100GB)</label>
+                                <input type="text" id="modal-size" value="100GB" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm px-2 py-1.5 ring-1 ring-inset ring-gray-300">
+                            </div>
+                            
+                            <div>
+                                <label for="modal-depth" class="block text-sm font-medium text-gray-700">Max Depth ('None' for root)</label>
+                                <input type="text" id="modal-depth" value="None" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm px-2 py-1.5 ring-1 ring-inset ring-gray-300">
+                            </div>
+
+                            <div class="sm:col-span-2">
+                                <div class="flex items-center">
+                                    <input id="modal-remove" type="checkbox" class="h-4 w-4 rounded border-gray-300 text-indigo-600">
+                                    <label for="modal-remove" class="ml-2 block text-sm font-medium text-red-600">Enable ACTUAL Deletion (Dry-Run if unchecked)</label>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="bg-gray-50 px-4 py-3 sm:flex sm:flex-row-reverse sm:px-6">
+                        <button id="modal-save-button" type="button" class="inline-flex w-full justify-center rounded-md bg-indigo-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-500 sm:ml-3 sm:w-auto">Save</button>
+                        <button id="modal-cancel-button" type="button" class="mt-3 inline-flex w-full justify-center rounded-md bg-white px-3 py-2 text-sm font-semibold text-gray-900 shadow-sm ring-1 ring-inset ring-gray-300 hover:bg-gray-50 sm:mt-0 sm:w-auto">Cancel</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+
+    <script>
+        // ######################################################################
+        // CONFIGURATION
+        // API_BASE_URL dikosongkan karena frontend disajikan dari server yang sama.
+        const API_BASE_URL = ""; 
+        // ######################################################################
+
+        (function() {
+            // State
+            let jwtToken = null;
+            let currentConfig = []; // Menyimpan state config
+
+            // Elemen UI (Disembunyikan agar ringkas)
+            const loginView = document.getElementById('login-view');
+            const dashboardView = document.getElementById('dashboard-view');
+            const loginButton = document.getElementById('login-button');
+            const logoutButton = document.getElementById('logout-button');
+            const loginError = document.getElementById('login-error');
+            const usernameInput = document.getElementById('username');
+            const passwordInput = document.getElementById('password');
+            const refreshButton = document.getElementById('refresh-all-button');
+            const metricsContent = document.getElementById('metrics-content');
+            const configContent = document.getElementById('config-content');
+            const historyContent = document.getElementById('history-content');
+            const modal = document.getElementById('modal');
+            const modalTitle = document.getElementById('modal-title');
+            const modalError = document.getElementById('modal-error');
+            const modalFilename = document.getElementById('modal-filename');
+            const modalPath = document.getElementById('modal-path');
+            const modalMethod = document.getElementById('modal-method');
+            const modalAge = document.getElementById('modal-age');
+            const modalSizeGroup = document.getElementById('modal-size-group');
+            const modalSize = document.getElementById('modal-size');
+            const modalDepth = document.getElementById('modal-depth');
+            const modalRemove = document.getElementById('modal-remove');
+            const modalSaveButton = document.getElementById('modal-save-button');
+            const modalCancelButton = document.getElementById('modal-cancel-button');
+            const addDirButton = document.getElementById('add-dir-button');
+
+            // --- Helpers ---
+            const helpers = {
+                showView: (viewId) => {
+                    loginView.classList.add('hidden');
+                    dashboardView.classList.add('hidden');
+                    document.getElementById(viewId).classList.remove('hidden');
+                },
+                humanReadableSize: (bytes) => {
+                    if (!bytes) return "0 B";
+                    const i = Math.floor(Math.log(bytes) / Math.log(1024));
+                    return `${(bytes / Math.pow(1024, i)).toFixed(2)} ${['B', 'KB', 'MB', 'GB', 'TB'][i]}`;
+                },
+                bytesToSizeStr: (bytes) => {
+                     if (!bytes) return "0GB";
+                     const i = Math.floor(Math.log(bytes) / Math.log(1024));
+                     const val = (bytes / Math.pow(1024, i)).toFixed(0);
+                     return `${val}${['B', 'K', 'M', 'G', 'T'][i]}`;
+                },
+                sizeStrToBytes: (sizeStr) => {
+                    const match = String(sizeStr).match(/^(\d+)(K|M|G|T)?B?$/i);
+                    if (!match) return 0;
+                    const val = parseInt(match[1], 10);
+                    const unit = (match[2] || '').toUpperCase();
+                    if (unit === 'T') return val * Math.pow(1024, 4);
+                    if (unit === 'G') return val * Math.pow(1024, 3);
+                    if (unit === 'M') return val * Math.pow(1024, 2);
+                    if (unit === 'K') return val * 1024;
+                    return val;
+                },
+                formatTimestamp: (ts) => {
+                    try {
+                        if (String(ts).includes('T')) {
+                            return new Date(ts).toLocaleString();
+                        } else {
+                            return new Date(ts * 1000).toLocaleString();
+                        }
+                    } catch (e) {
+                        return String(ts);
+                    }
+                }
+            };
+
+            // --- API Fetch Wrapper ---
+            const apiFetch = async (endpoint, options = {}) => {
+                if (!jwtToken) {
+                    helpers.showView('login-view');
+                    loginError.textContent = "Session expired. Please login again.";
+                    loginError.classList.remove('hidden');
+                    return;
+                }
+                const defaultOptions = {
+                    headers: { 'Authorization': `Bearer ${jwtToken}`, 'Content-Type': 'application/json' }
+                };
+                const mergedOptions = { ...defaultOptions, ...options };
+                if (options.body) {
+                    mergedOptions.body = JSON.stringify(options.body);
+                }
+                try {
+                    const response = await fetch(`${API_BASE_URL}${endpoint}`, mergedOptions);
+                    if (response.status === 401) {
+                        jwtToken = null;
+                        helpers.showView('login-view');
+                        loginError.textContent = "Session expired. Please login again.";
+                        loginError.classList.remove('hidden');
+                        throw new Error("Session expired");
+                    }
+                    if (!response.ok) {
+                        const err = await response.json();
+                        throw new Error(err.detail || `HTTP error! status: ${response.status}`);
+                    }
+                    if (response.status === 204) return null;
+                    return await response.json();
+                } catch (error) {
+                    console.error('API Fetch Error:', error);
+                    throw error;
+                }
+            };
+
+            // --- Fungsi Core ---
+            const app = {
+                init: () => {
+                    helpers.showView('login-view');
+                    loginButton.addEventListener('click', app.login);
+                    logoutButton.addEventListener('click', app.logout);
+                    refreshButton.addEventListener('click', app.loadAllData);
+                    addDirButton.addEventListener('click', () => app.openModal(null));
+                    modalCancelButton.addEventListener('click', () => modal.classList.add('hidden'));
+                    modalSaveButton.addEventListener('click', app.saveDirectory);
+                    modalMethod.addEventListener('change', (e) => {
+                        modalSizeGroup.classList.toggle('hidden', e.target.value !== 'size');
+                    });
+                },
+
+                login: async () => {
+                    loginError.classList.add('hidden');
+                    try {
+                        const formData = new URLSearchParams();
+                        formData.append('username', usernameInput.value);
+                        formData.append('password', passwordInput.value);
+                        
+                        const response = await fetch(`${API_BASE_URL}/token`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                            body: formData
+                        });
+                        if (!response.ok) {
+                            const err = await response.json();
+                            throw new Error(err.detail || 'Login failed');
+                        }
+                        const data = await response.json();
+                        jwtToken = data.access_token;
+                        helpers.showView('dashboard-view');
+                        app.loadAllData();
+                    } catch (error) {
+                        loginError.textContent = error.message;
+                        loginError.classList.remove('hidden');
+                    }
+                },
+
+                logout: () => {
+                    jwtToken = null;
+                    usernameInput.value = 'admin';
+                    passwordInput.value = '';
+                    loginError.classList.add('hidden');
+                    helpers.showView('login-view');
+                },
+
+                loadAllData: () => {
+                    app.loadMetrics();
+                    app.loadConfig();
+                    app.loadHistory();
+                },
+
+                // 1. Load Metrics
+                loadMetrics: async () => {
+                    try {
+                        metricsContent.innerHTML = `<div class="text-gray-500">Loading metrics...</div>`;
+                        const data = await apiFetch('/api/metrics');
+                        const istats = data.index_stats;
+                        let html = '';
+                        html += `<div class="overflow-hidden rounded-lg bg-white shadow p-5">
+                                   <div class="text-sm font-medium text-gray-500 truncate">Total Files Indexed</div>
+                                   <div class="mt-1 text-3xl font-semibold text-gray-900">${istats.total_files ? istats.total_files.toLocaleString() : 0}</div>
+                                 </div>`;
+                        html += `<div class="overflow-hidden rounded-lg bg-white shadow p-5">
+                                   <div class="text-sm font-medium text-gray-500 truncate">Total Size Indexed</div>
+                                   <div class="mt-1 text-3xl font-semibold text-gray-900">${helpers.humanReadableSize(istats.total_size_bytes)}</div>
+                                 </div>`;
+                        html += `<div class="overflow-hidden rounded-lg bg-white shadow p-5 col-span-1 sm:col-span-2">
+                                   <div class="text-sm font-medium text-gray-500 truncate">Index Last Updated</div>
+                                   <div class="mt-1 text-xl font-semibold text-gray-900">${istats.last_updated_timestamp ? helpers.formatTimestamp(istats.last_updated_timestamp) : 'Never'}</div>
+                                 </div>`;
+                        data.directory_stats.forEach(d => {
+                            let percent = (d.used_bytes / d.total_bytes) * 100;
+                            let color = percent > 85 ? 'bg-red-500' : (percent > 60 ? 'bg-yellow-500' : 'bg-green-500');
+                            html += `<div class="overflow-hidden rounded-lg bg-white shadow p-5 col-span-1 sm:col-span-2">
+                                       <div class="flex justify-between text-sm font-medium text-gray-500">
+                                           <span>${d.path}</span>
+                                           <span>${helpers.humanReadableSize(d.used_bytes)} / ${helpers.humanReadableSize(d.total_bytes)}</span>
+                                       </div>
+                                       <div class="mt-2 w-full bg-gray-200 rounded-full h-2.5">
+                                           <div class="${color} h-2.5 rounded-full" style="width: ${percent.toFixed(2)}%"></div>
+                                       </div>
+                                     </div>`;
+                        });
+                        metricsContent.innerHTML = html;
+                    } catch (e) {
+                        metricsContent.innerHTML = `<div class="text-red-500">Failed to load metrics: ${e.message}</div>`;
+                    }
+                },
+
+                // 2. Load Config
+                loadConfig: async () => {
+                    try {
+                        configContent.innerHTML = `<div class="text-gray-500">Loading config...</div>`;
+                        const data = await apiFetch('/api/config/directories');
+                        currentConfig = data.directories; // Simpan state
+                        
+                        if (currentConfig.length === 0) {
+                            configContent.innerHTML = `<div class="text-gray-500 text-center py-4">No directories configured.</div>`;
+                            return;
+                        }
+
+                        let tableHTML = `<table class="min-w-full divide-y divide-gray-300">
+                                            <thead><tr>
+                                                <th class="py-3.5 pl-4 pr-3 text-left text-sm font-semibold text-gray-900 sm:pl-0">Config File</th>
+                                                <th class="px-3 py-3.5 text-left text-sm font-semibold text-gray-900">Path</th>
+                                                <th class="px-3 py-3.5 text-left text-sm font-semibold text-gray-900">Method</th>
+                                                <th class="px-3 py-3.5 text-left text-sm font-semibold text-gray-900">Rule</th>
+                                                <th class="px-3 py-3.5 text-left text-sm font-semibold text-gray-900">Mode</th>
+                                                <th class="relative py-3.5 pl-3 pr-4 sm:pr-0"><span class="sr-only">Actions</span></th>
+                                            </tr></thead>
+                                            <tbody class="divide-y divide-gray-200">`;
+                        
+                        currentConfig.forEach((dir, index) => {
+                            const rule = dir.monitor_method === 'size' 
+                                ? `${helpers.humanReadableSize(dir.max_size_bytes)} (Age: ${dir.max_file_age_days}d)`
+                                : `${dir.max_file_age_days} days`;
+                            const mode = dir.remove 
+                                ? `<span class="font-bold text-red-600">DELETE</span>`
+                                : `<span class="font-bold text-green-600">DRY-RUN</span>`;
+                            
+                            tableHTML += `<tr>
+                                            <td class="py-4 pl-4 pr-3 text-sm font-mono text-gray-500 sm:pl-0">${dir.id}</td>
+                                            <td class="px-3 py-4 text-sm font-medium text-gray-900">${dir.target_directory}</td>
+                                            <td class="px-3 py-4 text-sm text-gray-500">${dir.monitor_method}</td>
+                                            <td class="px-3 py-4 text-sm text-gray-500">${rule}</td>
+                                            <td class="px-3 py-4 text-sm">${mode}</td>
+                                            <td class="py-4 pl-3 pr-4 text-right text-sm font-medium sm:pr-0">
+                                                <button class="text-indigo-600 hover:text-indigo-900" data-id="${dir.id}" onclick="window.app.openModal(this.dataset.id)">Edit</button>
+                                                <button class="text-red-600 hover:text-red-900 ml-4" data-id="${dir.id}" onclick="window.app.deleteDirectory(this.dataset.id)">Delete</button>
+                                            </td>
+                                          </tr>`;
+                        });
+                        
+                        tableHTML += `</tbody></table>`;
+                        configContent.innerHTML = tableHTML;
+                    } catch (e) {
+                        configContent.innerHTML = `<div class="text-red-500">Failed to load config: ${e.message}</div>`;
+                    }
+                },
+                
+                // 3. Load History
+                loadHistory: async () => {
+                     try {
+                        historyContent.innerHTML = `<div class="text-gray-500">Loading history...</div>`;
+                        const data = await apiFetch('/api/history?limit=10');
+                        const history = data.history;
+
+                        if (history.length === 0) {
+                            historyContent.innerHTML = `<div class="text-gray-500 text-center py-4">No cleanup history found.</div>`;
+                            return;
+                        }
+                        
+                        let tableHTML = `<table class="min-w-full divide-y divide-gray-300">
+                                            <thead><tr>
+                                                <th class="py-3.5 pl-4 pr-3 text-left text-sm font-semibold text-gray-900 sm:pl-0">Timestamp</th>
+                                                <th class="px-3 py-3.5 text-left text-sm font-semibold text-gray-900">Directory</th>
+                                                <th class="px-3 py-3.5 text-left text-sm font-semibold text-gray-900">Status</th>
+                                                <th class="px-3 py-3.5 text-left text-sm font-semibold text-gray-900">Details</th>
+                                            </tr></thead>
+                                            <tbody class="divide-y divide-gray-200">`;
+                        
+                        history.forEach(run => {
+                            const status = run.status;
+                            let color = 'text-gray-500';
+                            if (status === 'success') color = 'text-green-600';
+                            if (status === 'dry_run') color = 'text-blue-600';
+                            if (status === 'failed') color = 'text-red-600';
+                            const details = `Removed ${run.files_removed_by_age + run.files_removed_by_size} files (${helpers.humanReadableSize(run.bytes_removed_total)})`;
+                            tableHTML += `<tr>
+                                            <td class="py-4 pl-4 pr-3 text-sm text-gray-500 sm:pl-0">${helpers.formatTimestamp(run.run_timestamp)}</td>
+                                            <td class="px-3 py-4 text-sm font-medium text-gray-900">${run.target_directory}</td>
+                                            <td class="px-3 py-4 text-sm font-semibold ${color}">${status.toUpperCase()}</td>
+                                            <td class="px-3 py-4 text-sm text-gray-500">${run.message}</td>
+                                          </tr>`;
+                        });
+                        tableHTML += `</tbody></table>`;
+                        historyContent.innerHTML = tableHTML;
+                    } catch (e) {
+                        historyContent.innerHTML = `<div class="text-red-500">Failed to load history: ${e.message}</div>`;
+                    }
+                },
+                
+                // 4. Fungsi Modal
+                openModal: (filename) => {
+                    modalError.classList.add('hidden');
+                    if (filename === null) {
+                        // Mode Tambah (Add)
+                        modalTitle.textContent = "Add New Directory";
+                        modalFilename.value = "new_target.yaml";
+                        modalFilename.disabled = false;
+                        modalPath.value = "/home/user/data";
+                        modalMethod.value = "size";
+                        modalAge.value = "30";
+                        modalSize.value = "100GB";
+                        modalDepth.value = "None";
+                        modalRemove.checked = false;
+                        modalSizeGroup.classList.remove('hidden');
+                    } else {
+                        // Mode Edit
+                        const dir = currentConfig.find(d => d.id === filename);
+                        if (!dir) { alert("Error: could not find config to edit."); return; }
+                        modalTitle.textContent = `Edit Config: ${dir.id}`;
+                        modalFilename.value = dir.id;
+                        modalFilename.disabled = true; // Tidak bisa ganti nama file
+                        modalPath.value = dir.target_directory;
+                        modalMethod.value = dir.monitor_method;
+                        modalAge.value = dir.max_file_age_days;
+                        modalSize.value = helpers.bytesToSizeStr(dir.max_size_bytes);
+                        modalDepth.value = dir.max_depth === null ? 'None' : dir.max_depth;
+                        modalRemove.checked = dir.remove;
+                        modalSizeGroup.classList.toggle('hidden', dir.monitor_method !== 'size');
+                    }
+                    modal.classList.remove('hidden');
+                },
+
+                saveDirectory: async () => {
+                    modalError.classList.add('hidden');
+                    const filename = modalFilename.value.trim();
+                    const isEdit = modalFilename.disabled;
+                    
+                    let depthValue;
+                    const depthInput = modalDepth.value.trim().toLowerCase();
+                    if (depthInput === 'none' || depthInput === '') {
+                        depthValue = null;
+                    } else {
+                        depthValue = parseInt(depthInput, 10);
+                        if (isNaN(depthValue) || depthValue < 0) {
+                            modalError.textContent = "Max Depth must be a positive number or 'None'.";
+                            modalError.classList.remove('hidden');
+                            return;
+                        }
+                    }
+
+                    const dirData = {
+                        target_directory: modalPath.value.trim(),
+                        monitor_method: modalMethod.value,
+                        max_file_age_days: parseInt(modalAge.value, 10),
+                        max_size_bytes: modalMethod.value === 'size' ? helpers.sizeStrToBytes(modalSize.value) : null,
+                        max_depth: depthValue,
+                        remove: modalRemove.checked
+                    };
+                    
+                    if (!filename || !filename.endsWith('.yaml')) {
+                        modalError.textContent = "Filename is required and must end in .yaml";
+                        modalError.classList.remove('hidden');
+                        return;
+                    }
+                    if (!dirData.target_directory) {
+                        modalError.textContent = "Target Path is required.";
+                        modalError.classList.remove('hidden');
+                        return;
+                    }
+                    
+                    let endpoint = '/api/config/directory';
+                    let method = 'POST';
+                    let body = { filename: filename, config: dirData };
+
+                    if (isEdit) {
+                        endpoint = `/api/config/directory/${filename}`;
+                        method = 'PUT';
+                        body = dirData; // Hanya kirim data config saat PUT
+                    }
+
+                    try {
+                        await apiFetch(endpoint, {
+                            method: method,
+                            body: body
+                        });
+                        modal.classList.add('hidden');
+                        app.loadConfig(); // Muat ulang tabel
+                    } catch (e) {
+                         modalError.textContent = `API Error: ${e.message}`;
+                         modalError.classList.remove('hidden');
+                    }
+                },
+                
+                deleteDirectory: async (filename) => {
+                    if (!confirm(`Are you sure you want to remove the config file '${filename}'?`)) {
+                        return;
+                    }
+                    
+                    try {
+                        await apiFetch(`/api/config/directory/${filename}`, {
+                            method: 'DELETE'
+                        });
+                        app.loadConfig(); // Muat ulang tabel
+                    } catch (e) {
+                        alert(`Failed to delete directory: ${e.message}`);
+                    }
+                }
+            };
+
+            // Kaitkan fungsi ke window global agar onclick="" bisa berfungsi
+            window.app = app;
+            
+            // Jalankan aplikasi
+            app.init();
+        })();
+    </script>
+
+</body>
+</html>

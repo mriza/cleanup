@@ -15,6 +15,9 @@ import uvicorn
 
 import typer 
 from fastapi import FastAPI, HTTPException, Depends, status, Body
+# --- PERUBAHAN ---
+from fastapi.middleware.cors import CORSMiddleware # Impor CORS
+# --- AKHIR PERUBAHAN ---
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel, Field, validator, ValidationError, Literal
 from jose import JWTError, jwt
@@ -33,7 +36,6 @@ def load_config_from_yaml(path):
             fcntl.flock(f, fcntl.LOCK_UN) # Release
             return config_data
     except Exception as e:
-        # PERBAIKAN: Gunakan sys.stderr.write
         sys.stderr.write(f"FATAL: Error loading config {path}: {e}\n")
         sys.exit(1)
 
@@ -76,34 +78,40 @@ app = FastAPI(
     version="1.1.0"
 )
 
+# --- PERUBAHAN: Setup CORS ---
+# Ini mengizinkan frontend web Anda berbicara dengan API
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"], # Izinkan semua domain (atau ganti dengan domain frontend Anda)
+    allow_credentials=True,
+    allow_methods=["*"], # Izinkan semua metode (GET, POST, dll)
+    allow_headers=["*"], # Izinkan semua header (termasuk Authorization)
+)
+# --- AKHIR PERUBAHAN ---
+
 # --- Setup Keamanan (Auth) ---
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 ALGORITHM = "HS256"
 
-# PERBAIKAN (Poin 1): Daftar path yang dilindungi (TANPA '/')
 PROTECTED_PATHS_ABS = [os.path.normpath(os.path.abspath(p)) for p in [
     '/etc', '/usr', '/var', '/lib', '/sbin', '/bin', '/root',
     '/boot', '/dev', '/proc', '/sys', '/run'
 ]]
 
-# PERBAIKAN (Poin 1): Logika Pengecekan Path yang Benar
 def is_path_protected(target_path: str) -> bool:
     """Checks if target_path is OR is INSIDE a protected path."""
     try:
         abs_target_path = os.path.normpath(os.path.abspath(target_path))
     except ValueError:
-        return True # Path tidak valid
+        return True 
 
-    # 1. Cek terpisah untuk '/'
     if abs_target_path == os.path.normpath('/'):
         return True
         
-    # 2. Cek apakah path ADALAH atau DI DALAM path yang dilindungi
     for protected in PROTECTED_PATHS_ABS:
         if abs_target_path == protected:
             return True
-        # Pastikan kita menambahkan pemisah (separator) agar /var-log tidak cocok dengan /var
         if abs_target_path.startswith(protected + os.sep):
             return True
     return False
@@ -119,7 +127,6 @@ class DirectoryConfig(BaseModel):
 
     @validator('target_directory')
     def validate_target_path(cls, v):
-        # PERBAIKAN (Poin 1): Gunakan fungsi is_path_protected yang baru
         if is_path_protected(v):
             raise ValueError(f"Target path '{v}' is forbidden (is or is inside a system directory).")
         return v
@@ -188,7 +195,6 @@ def startup_event():
     """Saat startup: buat PID lock file."""
     log.info("API service starting up...")
     try:
-        # PERBAIKAN: Pastikan direktori /run/cleanupd ada
         os.makedirs(os.path.dirname(PID_FILE_PATH), 0o755, exist_ok=True)
         
         pid_f = open(PID_FILE_PATH, 'w')
@@ -326,7 +332,6 @@ async def get_history(limit: int = 50, user: str = Depends(get_current_user)):
     return {"history": history}
 
 if __name__ == "__main__":
-    # PERBAIKAN: Pindahkan chdir ke atas agar path config relatif juga aman
     os.chdir(os.path.dirname(os.path.abspath(__file__)))
     log.info(f"Starting API server on {API_HOST}:{API_PORT}...")
     uvicorn.run("api:app", host=API_HOST, port=API_PORT)

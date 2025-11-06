@@ -11,6 +11,7 @@ fastapi==0.111.0
 uvicorn[standard]==0.30.1
 passlib[bcrypt]==1.7.4
 python-jose[cryptography]==3.3.0
+aiofiles==23.2.1
 
 # API Client (for CLI)
 httpx==0.27.0

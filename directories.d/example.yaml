@@ -1,0 +1,10 @@
+# This is an example configuration file.
+# Rename this to 'worker.yaml' or similar in the /opt/cleanup/directories.d/ directory.
+# Each .yaml file in that directory defines ONE target.
+
+target_directory: "/home/atcs2/WORKER"
+monitor_method: "size"
+max_size_bytes: 429496729600
+max_file_age_days: 15
+max_depth: 3
+remove: true

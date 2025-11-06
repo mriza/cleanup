@@ -4,16 +4,13 @@ After=network.target
 
 [Service]
 Type=simple
-# Run as a non-privileged user
 User=cleanupd
 Group=cleanupd
-
 Environment=VIRTUAL_ENV=/opt/cleanup/venv
 Environment=PATH=/opt/cleanup/venv/bin:/usr/bin:/bin
 ExecStart=/opt/cleanup/venv/bin/python /opt/cleanup/api.py
 Restart=on-failure
 WorkingDirectory=/opt/cleanup
-# Creates /run/cleanupd for pid files, owned by 'cleanupd'
 RuntimeDirectory=cleanupd
 
 [Install]
