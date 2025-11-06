@@ -13,16 +13,14 @@ global_settings:
   directories_config_path: /opt/cleanup/directories.d
   
   # Absolute paths for PID (Process ID) files
-  # Ensure the 'cleanupd' user has write permission to this directory
-  # /run/cleanupd/ is created by systemd (via RuntimeDirectory)
   pid_paths:
     api: /run/cleanupd/api.pid
     indexer: /run/cleanupd/indexer.pid
     cleaner: /run/cleanupd/cleaner.pid
 
   # WARNING: Critical system paths that MUST NOT be touched.
+  # PERBAIKAN: Menghapus '/' dari daftar ini. Pengecekan root dilakukan secara terpisah.
   protected_paths:
-    - /
     - /etc
     - /usr
     - /var
@@ -39,7 +37,6 @@ global_settings:
 # ------------------
 # API Settings
 # ------------------
-# Read only by api.py (for hosting) and configure.py (for connecting)
 api_settings:
   api_host: 0.0.0.0
   api_port: 8000
@@ -55,4 +52,4 @@ api_settings:
 # Directory Settings
 # ------------------
 # The 'directories:' list is NO LONGER HERE.
-# Configurations are now individual .yaml files in the 'directories_config_path'.
+# Configurations are now individual .yaml files in 'directories_config_path'.

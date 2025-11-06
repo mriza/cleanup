@@ -10,7 +10,7 @@ import sys
 import fcntl
 import re
 import httpx
-import time # PERBAIKAN (Poin 2): Import time
+import time # PERBAIKAN: Impor modul time
 from typing import Optional, List, Dict, Any
 from passlib.context import CryptContext 
 
@@ -24,27 +24,22 @@ app = typer.Typer(
 
 # --- FUNGSI HELPER (Aman & Terkunci) ---
 
-# PERBAIKAN (Poin 1): Daftar path yang dilindungi (TANPA '/')
+# PERBAIKAN: Daftar path yang dilindungi (TANPA '/')
 PROTECTED_PATHS_ABS = [os.path.normpath(os.path.abspath(p)) for p in [
     '/etc', '/usr', '/var', '/lib', '/sbin', '/bin', '/root',
     '/boot', '/dev', '/proc', '/sys', '/run'
 ]]
 
-# PERBAIKAN (Poin 1): Logika Pengecekan Path yang Benar
 def is_path_protected(target_path: str) -> bool:
     """Checks if target_path is OR is INSIDE a protected path."""
     try:
         abs_target_path = os.path.normpath(os.path.abspath(target_path))
-    except ValueError:
-        return True 
+    except ValueError: return True 
 
-    if abs_target_path == os.path.normpath('/'):
-        return True
-        
+    if abs_target_path == os.path.normpath('/'): return True
     for protected in PROTECTED_PATHS_ABS:
-        if abs_target_path == protected:
-            return True
-        if abs_target_path.startswith(protected + os.sep):
+        if protected == '/': continue
+        if abs_target_path == protected or abs_target_path.startswith(protected + os.sep):
             return True
     return False
 
@@ -52,13 +47,16 @@ def load_connection_config() -> Dict[str, Any]:
     """Hanya membaca config.yaml untuk info koneksi API (read-only, shared lock)."""
     try:
         with open(CONFIG_PATH, 'r') as f:
-            # PERBAIKAN: Tambahkan read lock untuk konsistensi
             fcntl.flock(f, fcntl.LOCK_SH)
             config_data = yaml.safe_load(f)
             fcntl.flock(f, fcntl.LOCK_UN)
+            
+            # PERBAIKAN: Baca dari struktur modular
+            api_settings = config_data.get('api_settings', {})
             return {
-                "port": config_data.get('api_port', 8000),
-                "user": config_data.get('api_admin_user', 'admin')
+                "host": api_settings.get('api_host', '127.0.0.1'),
+                "port": api_settings.get('api_port', 8000),
+                "user": api_settings.get('api_admin_user', 'admin')
             }
     except Exception as e:
         typer.secho(f"Failed to load {CONFIG_PATH} for connection info: {e}", fg=typer.colors.RED, err=True)
@@ -67,13 +65,13 @@ def load_connection_config() -> Dict[str, Any]:
 # --- FUNGSI HELPER (API Client) ---
 class ApiClient:
     """Helper class untuk menangani otentikasi dan panggilan API."""
-    def __init__(self, port, user):
-        self.base_url = f"http://127.0.0.1:{port}"
+    def __init__(self, host, port, user):
+        connect_host = "127.0.0.1" if host == "0.0.0.0" else host
+        self.base_url = f"http://{connect_host}:{port}"
         self.user = user
         self.token = None
 
     def login(self):
-        """Mendapatkan token JWT dari API."""
         password = typer.prompt(f"Enter password for admin user '{self.user}'", hide_input=True)
         try:
             with httpx.Client() as client:
@@ -99,41 +97,37 @@ class ApiClient:
             self.login()
         return {"Authorization": f"Bearer {self.token}"}
 
-    def get(self, endpoint):
-        """Membuat panggilan GET (terotentikasi) ke API."""
+    def _request(self, method: str, endpoint: str, **kwargs) -> httpx.Response:
+        """Wrapper permintaan internal dengan penanganan error terpusat."""
         try:
             with httpx.Client() as client:
-                response = client.get(f"{self.base_url}{endpoint}", headers=self._get_headers())
+                response = client.request(method, f"{self.base_url}{endpoint}", headers=self._get_headers(), **kwargs)
                 response.raise_for_status()
-                return response.json()
+                return response
         except httpx.HTTPStatusError as e:
-            typer.secho(f"API Error: {e.response.status_code} - {e.response.json().get('detail', 'Unknown error')}", fg=typer.colors.RED)
+            detail = "Unknown error"
+            try:
+                detail = e.response.json().get('detail', 'Unknown error')
+            except:
+                pass
+            typer.secho(f"API Error: {e.response.status_code} - {detail}", fg=typer.colors.RED)
             raise typer.Exit(1)
         except Exception as e:
             typer.secho(f"An error occurred: {e}", fg=typer.colors.RED); raise typer.Exit(1)
 
-    def post(self, endpoint, data):
-        """Membuat panggilan POST (terotentikasi) ke API."""
-        try:
-            with httpx.Client() as client:
-                response = client.post(f"{self.base_url}{endpoint}", json=data, headers=self._get_headers())
-                response.raise_for_status()
-                return response.json()
-        except httpx.HTTPStatusError as e:
-            typer.secho(f"API Error: {e.response.status_code} - {e.response.json().get('detail', 'Unknown error')}", fg=typer.colors.RED)
-            raise typer.Exit(1)
-        except Exception as e:
-            typer.secho(f"An error occurred: {e}", fg=typer.colors.RED); raise typer.Exit(1)
+    def get(self, endpoint): return self._request("GET", endpoint).json()
+    def post(self, endpoint, data): return self._request("POST", endpoint, json=data).json()
+    def put(self, endpoint, data): return self._request("PUT", endpoint, json=data).json()
+    def delete(self, endpoint): return self._request("DELETE", endpoint)
+
 
 # Inisialisasi API client
 @app.callback()
 def main_callback(ctx: typer.Context):
-    """Callback untuk menginisialisasi state, jika diperlukan."""
     if ctx.invoked_subcommand == "hash-password":
         return
-    
     conn_config = load_connection_config()
-    ctx.obj = ApiClient(port=conn_config['port'], user=conn_config['user'])
+    ctx.obj = ApiClient(host=conn_config['host'], port=conn_config['port'], user=conn_config['user'])
 
 
 # --- FUNGSI HELPER (Lama, masih dipakai oleh CLI) ---
@@ -168,7 +162,6 @@ def _ask_for_dir_details(defaults: Dict[str, Any] = None) -> Dict[str, Any]:
         default_path = defaults.get('target_directory', "/home/user")
         target_dir = typer.prompt("Target directory path", default=default_path)
         
-        # PERBAIKAN (Poin 1): Gunakan cek path yang baru
         if is_path_protected(target_dir):
             typer.secho(f"ERROR: Path '{target_dir}' is inside a protected system directory! Forbidden.", fg=typer.colors.RED)
         elif not os.path.isdir(os.path.abspath(target_dir)):
@@ -187,7 +180,7 @@ def _ask_for_dir_details(defaults: Dict[str, Any] = None) -> Dict[str, Any]:
         try: new_dir['max_size_bytes'] = parse_size_to_bytes(size_str)
         except ValueError as e: typer.secho(f"Error: {e}", fg=typer.colors.RED); raise typer.Exit(1)
     new_dir['max_file_age_days'] = typer.prompt("Max file age (days)", default=defaults.get('max_file_age_days', 15), type=int)
-    new_dir['max_depth'] = typer.prompt("Max depth (leave empty for 'None'/unlimited at root)", default=defaults.get('max_depth', 'None'))
+    new_dir['max_depth'] = typer.prompt("Max depth (leave empty for 'None'/unlimited at root)", default=str(defaults.get('max_depth', 'None')))
     if isinstance(new_dir['max_depth'], str) and new_dir['max_depth'].strip().lower() in ['none', '']:
         new_dir['max_depth'] = None
     else: new_dir['max_depth'] = int(new_dir['max_depth'])
@@ -204,18 +197,19 @@ def list_targets(ctx: typer.Context):
     """
     client: ApiClient = ctx.obj
     typer.secho("Fetching configuration from API...", fg=typer.colors.DIM)
-    config_data = client.get("/api/config/directories")
-    dirs = config_data.get('directories', [])
+    all_configs = client.get("/api/config/directories")
     
-    if not dirs:
+    if not all_configs:
         typer.secho("No directories are configured yet.", fg=typer.colors.YELLOW)
         typer.echo(f"Use 'configure.py add' to add one.")
         return
 
     typer.secho("--- Monitored Directories (from API) ---", fg=typer.colors.CYAN, bold=True)
-    for i, d in enumerate(dirs):
-        typer.secho(f"[{i+1}] Path: {d.get('target_directory')}", bold=True)
-        typer.echo(f"    Mode      : {d.get('monitor_method')}")
+    for i, conf_file in enumerate(all_configs):
+        d = conf_file.get('config', {})
+        typer.secho(f"[{i+1}] {conf_file.get('id')}", bold=True, fg=typer.colors.WHITE)
+        typer.echo(f"    Path      : {d.get('target_directory')}")
+        typer.echo(f"    Method    : {d.get('monitor_method')}")
         if d.get('monitor_method') == 'size':
             size_str = human_readable_size(d.get('max_size_bytes'))
             typer.echo(f"    Max Size  : {size_str}")
@@ -231,47 +225,50 @@ def add_target(ctx: typer.Context):
     """Interactively adds a new target directory (via API)."""
     client: ApiClient = ctx.obj
     try:
+        filename = typer.prompt("Enter new config filename (e.g., worker.yaml)")
+        if not filename.endswith(('.yaml', '.yml')):
+            filename += ".yaml"
+        
         new_dir_details = _ask_for_dir_details()
+        
+        body = {"filename": filename, "config": new_dir_details}
+        
+        typer.secho(f"Sending new config '{filename}' to API...", fg=typer.colors.DIM)
+        client.post("/api/config/directory", data=body)
+    
+        typer.secho(f"\nSuccess! Config '{filename}' has been added.", fg=typer.colors.GREEN, bold=True)
+        list_targets(ctx)
+        
     except typer.Abort:
         typer.secho("Cancelled.", fg=typer.colors.YELLOW); return
-
-    typer.secho("Fetching current config from API...", fg=typer.colors.DIM)
-    config = client.get("/api/config/directories")
-    config['directories'].append(new_dir_details)
-    
-    typer.secho("Sending updated config to API...", fg=typer.colors.DIM)
-    client.post("/api/config/directories", data=config)
-    
-    typer.secho(f"\nSuccess! Directory '{new_dir_details['target_directory']}' has been added.", fg=typer.colors.GREEN, bold=True)
-    list_targets(ctx)
 
 @app.command(name="edit")
 def edit_target(ctx: typer.Context):
     """Edits an existing directory configuration (via API)."""
     client: ApiClient = ctx.obj
     typer.secho("Fetching current config from API...", fg=typer.colors.DIM)
-    config = client.get("/api/config/directories")
-    dirs = config.get('directories', [])
-    if not dirs:
+    all_configs = client.get("/api/config/directories")
+    if not all_configs:
         typer.secho("No directories to edit.", fg=typer.colors.YELLOW); return
     
     list_targets(ctx)
     try:
         num = typer.prompt("Enter the number of the directory to edit", type=int)
         idx = num - 1
-        if not (0 <= idx < len(dirs)):
+        if not (0 <= idx < len(all_configs)):
             typer.secho(f"Error: Number '{num}' is not valid.", fg=typer.colors.RED); return
             
-        existing_details = dirs[idx]
-        typer.secho(f"--- Editing '{existing_details['target_directory']}' ---", fg=typer.colors.CYAN)
+        existing_file = all_configs[idx]
+        filename = existing_file.get('id')
+        existing_details = existing_file.get('config')
+        
+        typer.secho(f"--- Editing '{filename}' ---", fg=typer.colors.CYAN)
         new_dir_details = _ask_for_dir_details(defaults=existing_details)
         
-        config['directories'][idx] = new_dir_details
+        typer.secho(f"Sending updated config for '{filename}' to API...", fg=typer.colors.DIM)
+        client.put(f"/api/config/directory/{filename}", data=new_dir_details)
         
-        typer.secho("Sending updated config to API...", fg=typer.colors.DIM)
-        client.post("/api/config/directories", data=config)
-        
-        typer.secho(f"\nSuccess! Directory '{new_dir_details['target_directory']}' has been updated.", fg=typer.colors.GREEN, bold=True)
+        typer.secho(f"\nSuccess! Config '{filename}' has been updated.", fg=typer.colors.GREEN, bold=True)
     except typer.Abort:
         typer.secho("Cancelled.", fg=typer.colors.YELLOW)
 
@@ -280,24 +277,23 @@ def remove_target(ctx: typer.Context):
     """Removes a target directory from the configuration (via API)."""
     client: ApiClient = ctx.obj
     typer.secho("Fetching current config from API...", fg=typer.colors.DIM)
-    config = client.get("/api/config/directories")
-    dirs = config.get('directories', [])
-    if not dirs:
+    all_configs = client.get("/api/config/directories")
+    if not all_configs:
         typer.secho("No directories to remove.", fg=typer.colors.YELLOW); return
     
     list_targets(ctx)
     try:
         num = typer.prompt("Enter the number of the directory to remove", type=int)
         idx = num - 1
-        if not (0 <= idx < len(dirs)):
+        if not (0 <= idx < len(all_configs)):
             typer.secho(f"Error: Number '{num}' is not valid.", fg=typer.colors.RED); return
             
-        removed_dir = config['directories'].pop(idx)
+        filename = all_configs[idx].get('id')
         
-        if typer.confirm(f"Are you sure you want to remove '{removed_dir['target_directory']}'?"):
-            typer.secho("Sending updated config to API...", fg=typer.colors.DIM)
-            client.post("/api/config/directories", data=config)
-            typer.secho(f"\nSuccess! Directory '{removed_dir['target_directory']}' has been removed.", fg=typer.colors.GREEN, bold=True)
+        if typer.confirm(f"Are you sure you want to remove config file '{filename}'?"):
+            typer.secho(f"Sending delete request for '{filename}' to API...", fg=typer.colors.DIM)
+            client.delete(f"/api/config/directory/{filename}")
+            typer.secho(f"\nSuccess! Config '{filename}' has been removed.", fg=typer.colors.GREEN, bold=True)
         else:
             typer.secho("Cancelled.", fg=typer.colors.YELLOW)
     except typer.Abort:
@@ -329,7 +325,6 @@ def get_metrics(ctx: typer.Context):
     else:
         typer.echo(f"Total Files Indexed : {istats.get('total_files')}")
         typer.echo(f"Total Size Indexed  : {human_readable_size(istats.get('total_size_bytes'))}")
-        # PERBAIKAN (Poin 2): Cek jika timestamp ada
         ts = istats.get('last_updated_timestamp')
         if ts:
             typer.echo(f"Index Last Updated  : {time.ctime(ts)}")
@@ -380,6 +375,5 @@ def get_history(
         typer.echo("-" * 20)
 
 if __name__ == "__main__":
-    # PERBAIKAN: Set CWD ke lokasi skrip
     os.chdir(os.path.dirname(os.path.abspath(__file__)))
     app()

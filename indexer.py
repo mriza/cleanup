@@ -14,12 +14,8 @@ import logging
 import fcntl # For PID locking
 
 # --- GLOBAL CONFIGURATION ---
-# PERBAIKAN (Poin 1): Daftar path yang dilindungi (TANPA '/')
-PROTECTED_PATHS_ABS = [os.path.normpath(os.path.abspath(p)) for p in [
-    '/etc', '/usr', '/var', '/lib', '/sbin', '/bin', '/root',
-    '/boot', '/dev', '/proc', '/sys', '/run'
-]]
-PID_FILE_PATH = "/run/cleanupd/indexer.pid"
+PID_FILE_PATH = "/run/cleanupd/indexer.pid" # Default, akan di-override
+PROTECTED_PATHS_ABS = [] # Default, akan di-override
 
 # Logger (will be configured in main)
 log = logging.getLogger(os.path.basename(__file__))
@@ -30,9 +26,9 @@ def load_config_from_yaml(path):
     """Safely loads a YAML file using a shared read lock."""
     try:
         with open(path, "r") as f:
-            fcntl.flock(f, fcntl.LOCK_SH) # Shared Lock (Read)
+            fcntl.flock(f, fcntl.LOCK_SH)
             config_data = yaml.safe_load(f)
-            fcntl.flock(f, fcntl.LOCK_UN) # Release
+            fcntl.flock(f, fcntl.LOCK_UN)
             return config_data
     except Exception as e:
         sys.stderr.write(f"FATAL: Error loading config {path} before logging setup: {e}\n")
@@ -51,27 +47,47 @@ def setup_logging(level_name: str):
     )
     log.setLevel(level)
 
-# PERBAIKAN (Poin 1): Logika Pengecekan Path yang Benar
 def is_path_protected(target_path: str) -> bool:
-    """Checks if target_path is OR is INSIDE a protected path."""
+    """Checks if target_path is OR is INSIDE a protected path (dari config)."""
     try:
         abs_target_path = os.path.normpath(os.path.abspath(target_path))
-    except ValueError:
-        return True # Path tidak valid
+    except ValueError: return True 
 
-    if abs_target_path == os.path.normpath('/'):
-        return True
-        
     for protected in PROTECTED_PATHS_ABS:
-        if abs_target_path == protected:
-            return True
-        if abs_target_path.startswith(protected + os.sep):
+        if protected == '/' and abs_target_path == '/': return True
+        if protected != '/' and (abs_target_path == protected or abs_target_path.startswith(protected + os.sep)):
             return True
     return False
 
+# --- HELPER (BARU): Memuat Konfigurasi Direktori ---
+def load_directory_configs(config: dict) -> List[Dict[str, Any]]:
+    """
+    Memindai 'directories_config_path' dari config global
+    dan memuat semua file .yaml di dalamnya.
+    """
+    g_settings = config.get('global_settings', {})
+    dir_path = g_settings.get('directories_config_path', 'directories.d')
+    
+    if not os.path.isdir(dir_path):
+        log.warning(f"Configuration directory '{dir_path}' not found.")
+        return []
+
+    configs = []
+    for f in os.scandir(dir_path):
+        if f.is_file() and f.name.endswith(('.yaml', '.yml')):
+            try:
+                with open(f.path, 'r') as file:
+                    dir_conf = yaml.safe_load(file)
+                    if dir_conf and dir_conf.get('target_directory'):
+                        configs.append(dir_conf) # Hanya perlu datanya, bukan ID file
+                    else:
+                        log.warning(f"Config file '{f.name}' skipped: invalid format or no 'target_directory'.")
+            except Exception as e:
+                log.error(f"Failed to load config file '{f.name}': {e}")
+    return configs
+
 # --- HELPER FUNCTIONS (Directory Removal) ---
 def handle_rmtree_permission_error(func, path, exc_info):
-    """Callback for shutil.rmtree on permission errors."""
     if not os.access(path, os.W_OK):
         try:
             os.chmod(path, stat.S_IWUSR); func(path)
@@ -81,7 +97,6 @@ def handle_rmtree_permission_error(func, path, exc_info):
         log.error(f"Failed to remove {path} (not a permission issue): {exc_info}"); raise
 
 def safe_remove_dir(path, reason, dry_run=False):
-    """Safe wrapper for shutil.rmtree."""
     if dry_run:
         log.info(f"[DRY-RUN] Would remove directory: {path} (Reason: {reason})")
         return True
@@ -93,7 +108,6 @@ def safe_remove_dir(path, reason, dry_run=False):
         log.error(f"Failed to remove directory {path}: {e}"); return False
 
 def remove_deep_directories(root_path, max_depth, dry_run=False):
-    """Deletes all directories deeper than max_depth."""
     if max_depth is None: return 0
     removed_dirs_count = 0
     log.info(f"Checking for directories exceeding depth {max_depth}...")
@@ -113,7 +127,6 @@ def remove_deep_directories(root_path, max_depth, dry_run=False):
 
 # --- HELPER FUNCTIONS (File Iterators) ---
 def iterate_root_files_only(path):
-    """Logic for max_depth = None: Only FILES in the root, non-recursive."""
     log.info(f"Mode: Root files only (non-recursive).")
     try:
         for entry in os.scandir(path):
@@ -127,15 +140,12 @@ def iterate_root_files_only(path):
         log.error(f"Could not scan directory {path}: {e}")
 
 def iterate_recursive_files_with_depth(path, max_depth):
-    """Logic for max_depth = N: Recursive BUT stops if deeper than N."""
     log.info(f"Mode: Recursive up to depth {max_depth}.")
     for dirpath, dirnames, filenames in os.walk(path, topdown=True):
         rel_path = os.path.relpath(dirpath, path)
         depth = 0 if rel_path == '.' else rel_path.count(os.sep) + 1
-
         if depth > max_depth:
             dirnames[:] = []; continue
-        
         for f in filenames:
             try:
                 full_path = os.path.join(dirpath, f)
@@ -146,7 +156,6 @@ def iterate_recursive_files_with_depth(path, max_depth):
                 continue
 
 def get_file_iterator(path, max_depth):
-    """'Factory' function that selects the correct iterator based on max_depth."""
     if max_depth is None:
         return iterate_root_files_only(path)
     else:
@@ -154,12 +163,7 @@ def get_file_iterator(path, max_depth):
 
 # --- HELPER FUNCTIONS (Database Indexing) ---
 def initialize_database(db_path):
-    """
-    Check if DB exists, create tables (file_index AND cleanup_history),
-    and SET WAL MODE.
-    """
     log.info(f"Ensuring database index exists at {os.path.abspath(db_path)}...")
-    
     with sqlite3.connect(db_path, timeout=300) as conn:
         cursor = conn.cursor()
         try:
@@ -182,29 +186,24 @@ def initialize_database(db_path):
             run_id INTEGER PRIMARY KEY AUTOINCREMENT,
             run_timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
             target_directory TEXT,
-            status TEXT, -- 'success', 'dry_run', 'failed'
+            status TEXT,
             files_removed_by_age INTEGER,
             files_removed_by_size INTEGER,
             bytes_removed_total INTEGER,
-            message TEXT -- For summary log or error message
+            message TEXT
         )
         """)
-        
         conn.commit()
 
 def run_indexing(target_path, max_depth, db_path):
-    """Core script: Scan disk -> Insert into DB."""
     log.info(f"Starting indexing for: {target_path}")
     start_time = time.time()
-    
     file_iterator = get_file_iterator(target_path, max_depth)
     
     def file_data_generator():
         for mtime, size, path in file_iterator:
             yield (target_path, path, mtime, size)
-
     try:
-        # Transaksi 'with' ini sudah atomik
         with sqlite3.connect(db_path, timeout=300) as conn:
             cursor = conn.cursor()
             cursor.execute("DELETE FROM file_index WHERE target_directory = ?", (target_path,))
@@ -217,7 +216,6 @@ def run_indexing(target_path, max_depth, db_path):
         log.critical(f"Failed to perform database indexing (possibly locked): {e}"); return False
     except Exception as e:
         log.critical(f"Failed while scanning files: {e}"); return False
-
     end_time = time.time()
     log.info(f"Indexing finished in {end_time - start_time:.2f} seconds.")
     return True
@@ -225,23 +223,23 @@ def run_indexing(target_path, max_depth, db_path):
 # --- MAIN FUNCTION (Refactored) ---
 def run_main_logic(config: dict, db_path: str):
     """The actual main function, called after lock is acquired."""
-    directories_to_process = config.get('directories', [])
+    # BARU: Memuat pekerjaan dari direktori config
+    directories_to_process = load_directory_configs(config)
+    
     if not directories_to_process:
-        log.info("No directories configured. Exiting."); return
+        log.info("No directories configured in 'directories.d'. Exiting."); return
 
     log.info(f"--- Starting Indexing Session ---")
     for dir_config in directories_to_process:
         target_path = dir_config.get('target_directory')
         if not target_path:
             log.warning("Skipping entry with no 'target_directory'."); continue
-        
         try:
             if not os.path.isdir(target_path):
                 log.warning(f"Skipping. 'target_directory' is not a valid directory: {target_path}"); continue
         except Exception as e:
             log.warning(f"Skipping. Could not access 'target_directory' {target_path}: {e}"); continue
             
-        # PERBAIKAN (Poin 1): Gunakan cek path yang baru
         if is_path_protected(target_path):
             log.error(f"SKIPPING: Target '{target_path}' is in or IS a forbidden system path. Will not process."); continue
             
@@ -262,19 +260,19 @@ if __name__ == "__main__":
     parser.add_argument('--config', default='config.yaml', help='Path to config.yaml')
     args = parser.parse_args()
     
-    # PERBAIKAN: Set CWD ke lokasi skrip
     os.chdir(os.path.dirname(os.path.abspath(__file__)))
-
     config = load_config_from_yaml(args.config)
     
-    log_level = config.get('log_level', 'INFO')
-    # PERBAIKAN: Gunakan path absolut untuk DB agar CWD tidak masalah
-    db_path = os.path.abspath(config.get('db_path', 'cleanup_index.db'))
+    G_SETTINGS = config.get('global_settings', {})
+    log_level = G_SETTINGS.get('log_level', 'INFO')
+    db_path = os.path.abspath(G_SETTINGS.get('db_path', 'cleanup_index.db'))
+    PID_FILE_PATH = G_SETTINGS.get('pid_paths', {}).get('indexer', '/run/cleanupd/indexer.pid')
+    PROTECTED_PATHS_ABS = [os.path.normpath(os.path.abspath(p)) for p in G_SETTINGS.get('protected_paths', ['/'])]
+    
     setup_logging(log_level)
 
     # --- PID LOCK ---
     try:
-        # PERBAIKAN: Pastikan direktori /run/cleanupd ada
         os.makedirs(os.path.dirname(PID_FILE_PATH), 0o755, exist_ok=True)
         lock_f = open(PID_FILE_PATH, 'w')
         fcntl.flock(lock_f, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -295,7 +293,6 @@ if __name__ == "__main__":
     except Exception as e:
         log.critical(f"An unhandled error occurred: {e}", exc_info=True)
     finally:
-        # Release the lock
         log.info("Releasing lock and exiting.")
         fcntl.flock(lock_f, fcntl.LOCK_UN)
         lock_f.close()

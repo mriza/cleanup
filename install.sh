@@ -49,19 +49,21 @@ chown -R "${SERVICE_USER}":"${SERVICE_USER}" "${VENV_DIR}"
 chown -R "${SERVICE_USER}":"${SERVICE_USER}" "${STATIC_DIR}"
 chown -R "${SERVICE_USER}":"${SERVICE_USER}" "${DIRECTORIES_D}"
 chown "${SERVICE_USER}":"${SERVICE_USER}" "${INSTALL_DIR}"/*.py
-chown "${SERVICE_USER}":"${SERVICE_USER}" "${INSTALL_DIR}"/config.yaml
-chown "${SERVICE_USER}":"${SERVICE_USER}" "${INSTALL_DIR}"/requirements.txt
+chown "${SERVICE_USER}":"${SERVICE_USER}" "${INSTALL_DIR}/config.yaml"
+chown "${SERVICE_USER}":"${SERVICE_USER}" "${INSTALL_DIR}/requirements.txt"
 chown "${SERVICE_USER}":"${SERVICE_USER}" "${INSTALL_DIR}/README.md"
 echo "File ownership set to '${SERVICE_USER}'."
 
 # 3. Secure the API Secret Key
 CONFIG_FILE="${INSTALL_DIR}/config.yaml"
-DEFAULT_KEY="api_secret_key: \"CHANGE_THIS_TO_A_VERY_LONG_RANDOM_SECRET_STRING\""
+# PERBAIKAN: Pola string ini sekarang cocok dengan config.yaml (termasuk tanda kutip dan spasi)
+DEFAULT_KEY="  api_secret_key: \"CHANGE_THIS_TO_A_VERY_LONG_RANDOM_SECRET_STRING\""
 
 if grep -qF "$DEFAULT_KEY" "$CONFIG_FILE"; then
     echo "Generating new random API_SECRET_KEY..."
     NEW_KEY=$(openssl rand -hex 32)
-    sudo -u "${SERVICE_USER}" sed -i "s|$DEFAULT_KEY|api_secret_key: \"$NEW_KEY\"|g" "$CONFIG_FILE"
+    # Gunakan sudo -u untuk menulis sebagai pemilik file (cleanupd)
+    sudo -u "${SERVICE_USER}" sed -i "s|$DEFAULT_KEY|  api_secret_key: \"$NEW_KEY\"|g" "$CONFIG_FILE"
     echo "API_SECRET_KEY has been randomized for security."
 else
     echo "API_SECRET_KEY already set. Skipping generation."
@@ -141,4 +143,8 @@ echo "1. Generate a new hash:"
 echo "   sudo -u ${SERVICE_USER} /opt/cleanup/venv/bin/python /opt/cleanup/configure.py hash-password"
 echo "2. Copy the generated hash."
 echo "3. Paste it into /opt/cleanup/config.yaml, replacing the default 'api_admin_pass_hash'."
-echo "4. Restart the
+echo "4. Restart the API service: sudo systemctl restart cleanupd-api.service"
+echo ""
+echo "--- ⚠️ ACTION REQUIRED: Grant Permissions ---"
+echo "Remember to grant '${SERVICE_USER}' permissions on your target directories!"
+echo "e.g., sudo setfacl -R -m u:${SERVICE_USER}:rwx /home/atcs2/WORKER"

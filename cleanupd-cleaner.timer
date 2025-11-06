@@ -1,11 +1,11 @@
 [Unit]
-Description=Run cleanupd-cleaner.service periodically (30 mins past the hour)
-Requires=cleanupd-cleaner.service
+Description=Run cleanupd-indexer.service periodically (hourly)
+Requires=cleanupd-indexer.service
 
 [Timer]
-Unit=cleanupd-cleaner.service
-OnBootSec=15min
-OnCalendar=*:30
+Unit=cleanupd-indexer.service
+OnBootSec=1min
+OnCalendar=hourly
 RandomizedDelaySec=5m
 Persistent=true
 

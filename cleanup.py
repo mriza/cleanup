@@ -14,10 +14,7 @@ import logging
 import fcntl # For PID locking
 
 # --- GLOBAL CONFIGURATION ---
-PROTECTED_PATHS_ABS = [os.path.normpath(os.path.abspath(p)) for p in [
-    '/etc', '/usr', '/var', '/lib', '/sbin', '/bin', '/root',
-    '/boot', '/dev', '/proc', '/sys', '/run'
-]]
+PROTECTED_PATHS_ABS = []
 SECONDS_IN_A_DAY = 86400
 PID_FILE_PATH = "/run/cleanupd/cleaner.pid"
 
@@ -30,9 +27,9 @@ def load_config_from_yaml(path):
     """Safely loads a YAML file using a shared read lock."""
     try:
         with open(path, "r") as f:
-            fcntl.flock(f, fcntl.LOCK_SH) # Shared Lock (Read)
+            fcntl.flock(f, fcntl.LOCK_SH)
             config_data = yaml.safe_load(f)
-            fcntl.flock(f, fcntl.LOCK_UN) # Release
+            fcntl.flock(f, fcntl.LOCK_UN)
             return config_data
     except Exception as e:
         sys.stderr.write(f"FATAL: Error loading config {path} before logging setup: {e}\n")
@@ -51,28 +48,48 @@ def setup_logging(level_name: str):
     )
     log.setLevel(level)
 
-# PERBAIKAN (Poin 1): Logika Pengecekan Path yang Benar
 def is_path_protected(target_path: str) -> bool:
-    """Checks if target_path is OR is INSIDE a protected path."""
+    """Checks if target_path is OR is INSIDE a protected path (dari config)."""
     try:
         abs_target_path = os.path.normpath(os.path.abspath(target_path))
-    except ValueError:
-        return True 
+    except ValueError: return True 
 
-    if abs_target_path == os.path.normpath('/'):
-        return True
-        
     for protected in PROTECTED_PATHS_ABS:
-        if abs_target_path == protected:
-            return True
-        if abs_target_path.startswith(protected + os.sep):
+        if protected == '/' and abs_target_path == '/': return True
+        if protected != '/' and (abs_target_path == protected or abs_target_path.startswith(protected + os.sep)):
             return True
     return False
+
+# --- HELPER (BARU): Memuat Konfigurasi Direktori ---
+def load_directory_configs(config: dict) -> List[Dict[str, Any]]:
+    """
+    Memindai 'directories_config_path' dari config global
+    dan memuat semua file .yaml di dalamnya.
+    """
+    g_settings = config.get('global_settings', {})
+    dir_path = g_settings.get('directories_config_path', 'directories.d')
+    
+    if not os.path.isdir(dir_path):
+        log.warning(f"Configuration directory '{dir_path}' not found.")
+        return []
+
+    configs = []
+    for f in os.scandir(dir_path):
+        if f.is_file() and f.name.endswith(('.yaml', '.yml')):
+            try:
+                with open(f.path, 'r') as file:
+                    dir_conf = yaml.safe_load(file)
+                    if dir_conf and dir_conf.get('target_directory'):
+                        configs.append(dir_conf) # Hanya perlu datanya
+                    else:
+                        log.warning(f"Config file '{f.name}' skipped: invalid format or no 'target_directory'.")
+            except Exception as e:
+                log.error(f"Failed to load config file '{f.name}': {e}")
+    return configs
 
 # --- HELPER FUNCTIONS (File Removal & History) ---
 def safe_remove_file(path, reason, dry_run=False):
     """Safe wrapper for os.remove (deletes a single file)."""
-    # Logs at DEBUG level to avoid noise
     if dry_run:
         log.debug(f"[DRY-RUN] Would remove: {path} (Reason: {reason})")
         return True
@@ -82,7 +99,7 @@ def safe_remove_file(path, reason, dry_run=False):
         return True
     except FileNotFoundError:
         log.warning(f"Wanted to remove {path} but it was already gone.")
-        return True # Count as success
+        return True
     except Exception as e:
         log.error(f"Failed to remove {path}: {e}")
         return False
@@ -124,10 +141,6 @@ def save_history_log(db_path: str, target_path: str, summary: dict):
 # --- MAIN CLEANUP FUNCTIONS ---
 
 def cleanup_directory_by_size(db_path: str, target_path: str, max_bytes: int, max_file_age_days: int, dry_run=False) -> dict:
-    """
-    Cleanup logic 'by size' USING the database index.
-    Returns a summary dictionary of its actions.
-    """
     log.info("Method 'size': Cleaning using index.")
     now = time.time(); age_cutoff = now - (max_file_age_days * SECONDS_IN_A_DAY)
     
@@ -195,16 +208,9 @@ def cleanup_directory_by_size(db_path: str, target_path: str, max_bytes: int, ma
 
     except sqlite3.Error as e:
         log.error(f"Failed to read index (possibly locked): {e}")
-        return {
-            "status": "failed", "files_removed_by_age": 0, "files_removed_by_size": 0,
-            "bytes_removed_total": 0, "message": f"Failed to read index: {e}"
-        }
+        return {"status": "failed", "message": f"Failed to read index: {e}"}
 
 def cleanup_directory_by_age(db_path: str, target_path: str, max_days: int, dry_run=False) -> dict:
-    """
-    Cleanup logic 'by age' USING the database index.
-    Returns a summary dictionary of its actions.
-    """
     log.info("Method 'age': Cleaning using index.")
     now = time.time(); cutoff_time = now - (max_days * SECONDS_IN_A_DAY)
     removed_files_count = 0
@@ -234,20 +240,17 @@ def cleanup_directory_by_age(db_path: str, target_path: str, max_days: int, dry_
                 "bytes_removed_total": total_bytes_removed,
                 "message": msg
             }
-
     except sqlite3.Error as e:
         log.error(f"Failed to read index (possibly locked): {e}")
-        return {
-            "status": "failed", "files_removed_by_age": 0, "files_removed_by_size": 0,
-            "bytes_removed_total": 0, "message": f"Failed to read index: {e}"
-        }
+        return {"status": "failed", "message": f"Failed to read index: {e}"}
 
 # --- MAIN FUNCTION (Refactored) ---
 def run_main_logic(config: dict, db_path: str):
-    """The actual main function, called after lock is acquired."""
-    directories_to_process = config.get('directories', [])
+    # BARU: Memuat pekerjaan dari direktori config
+    directories_to_process = load_directory_configs(config)
+    
     if not directories_to_process:
-        log.info("No directories configured. Exiting."); return
+        log.info("No directories configured in 'directories.d'. Exiting."); return
 
     log.info(f"--- Starting Cleanup Session (Using Index) ---")
     
@@ -256,14 +259,12 @@ def run_main_logic(config: dict, db_path: str):
         if not target_path:
             log.warning(f"Skipping. 'target_directory' not in config entry."); continue
         
-        # PERBAIKAN (Poin 1): Gunakan cek path yang baru
         if is_path_protected(target_path):
             log.error(f"SKIPPING: Target '{target_path}' is in or IS a forbidden system path. Will not process."); continue
             
         monitor_method = dir_config.get('monitor_method', 'size')
         is_dry_run = not dir_config.get('remove', False)
         max_file_age_days = dir_config.get('max_file_age_days', 30)
-        # PERBAIKAN (Poin 5): Nama variabel
         max_size_bytes = dir_config.get('max_size_bytes', 400 * 1024**3)
         
         log.info(f"=== Processing {target_path} | Method: {monitor_method} | DRY-RUN: {is_dry_run} ===")
@@ -285,7 +286,6 @@ def run_main_logic(config: dict, db_path: str):
             log.error(f"Unhandled error during cleanup for {target_path}: {e}", exc_info=True)
             summary = {"status": "failed", "message": f"Unhandled error: {e}"}
 
-        # Save aggregate summary to DB
         save_history_log(db_path, target_path, summary)
             
     log.info(f"--- Cleanup Session Finished ---")
@@ -295,19 +295,19 @@ if __name__ == "__main__":
     parser.add_argument('--config', default='config.yaml', help='Path to config.yaml')
     args = parser.parse_args()
 
-    # PERBAIKAN: Set CWD ke lokasi skrip
     os.chdir(os.path.dirname(os.path.abspath(__file__)))
-
     config = load_config_from_yaml(args.config)
     
-    log_level = config.get('log_level', 'INFO')
-    # PERBAIKAN: Gunakan path absolut untuk DB agar CWD tidak masalah
-    db_path = os.path.abspath(config.get('db_path', 'cleanup_index.db'))
+    G_SETTINGS = config.get('global_settings', {})
+    log_level = G_SETTINGS.get('log_level', 'INFO')
+    db_path = os.path.abspath(G_SETTINGS.get('db_path', 'cleanup_index.db'))
+    PID_FILE_PATH = G_SETTINGS.get('pid_paths', {}).get('cleaner', '/run/cleanupd/cleaner.pid')
+    PROTECTED_PATHS_ABS = [os.path.normpath(os.path.abspath(p)) for p in G_SETTINGS.get('protected_paths', ['/'])]
+    
     setup_logging(log_level)
 
     # --- PID LOCK ---
     try:
-        # PERBAIKAN: Pastikan direktori /run/cleanupd ada
         os.makedirs(os.path.dirname(PID_FILE_PATH), 0o755, exist_ok=True)
         lock_f = open(PID_FILE_PATH, 'w')
         fcntl.flock(lock_f, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -321,14 +321,12 @@ if __name__ == "__main__":
         log.critical(f"Failed to create PID lock {PID_FILE_PATH}: {e}")
         sys.exit(1)
 
-
     # --- MAIN EXECUTION ---
     try:
         run_main_logic(config, db_path)
     except Exception as e:
         log.critical(f"An unhandled error occurred: {e}", exc_info=True)
     finally:
-        # Release the lock
         log.info("Releasing lock and exiting.")
         fcntl.flock(lock_f, fcntl.LOCK_UN)
         lock_f.close()

@@ -138,9 +138,9 @@
         (function() {
             // State
             let jwtToken = null;
-            let currentConfig = []; // Menyimpan state config
+            let currentConfig = []; // Menyimpan state config (sekarang [ {id: "file.yaml", config: {...}}, ... ])
 
-            // Elemen UI (Disembunyikan agar ringkas)
+            // Elemen UI
             const loginView = document.getElementById('login-view');
             const dashboardView = document.getElementById('dashboard-view');
             const loginButton = document.getElementById('login-button');
@@ -342,8 +342,9 @@
                 loadConfig: async () => {
                     try {
                         configContent.innerHTML = `<div class="text-gray-500">Loading config...</div>`;
+                        // PERBAIKAN: Endpoint API baru
                         const data = await apiFetch('/api/config/directories');
-                        currentConfig = data.directories; // Simpan state
+                        currentConfig = data; // Simpan state
                         
                         if (currentConfig.length === 0) {
                             configContent.innerHTML = `<div class="text-gray-500 text-center py-4">No directories configured.</div>`;
@@ -361,7 +362,8 @@
                                             </tr></thead>
                                             <tbody class="divide-y divide-gray-200">`;
                         
-                        currentConfig.forEach((dir, index) => {
+                        currentConfig.forEach((conf_file, index) => {
+                            const dir = conf_file.config;
                             const rule = dir.monitor_method === 'size' 
                                 ? `${helpers.humanReadableSize(dir.max_size_bytes)} (Age: ${dir.max_file_age_days}d)`
                                 : `${dir.max_file_age_days} days`;
@@ -370,14 +372,14 @@
                                 : `<span class="font-bold text-green-600">DRY-RUN</span>`;
                             
                             tableHTML += `<tr>
-                                            <td class="py-4 pl-4 pr-3 text-sm font-mono text-gray-500 sm:pl-0">${dir.id}</td>
+                                            <td class="py-4 pl-4 pr-3 text-sm font-mono text-gray-500 sm:pl-0">${conf_file.id}</td>
                                             <td class="px-3 py-4 text-sm font-medium text-gray-900">${dir.target_directory}</td>
                                             <td class="px-3 py-4 text-sm text-gray-500">${dir.monitor_method}</td>
                                             <td class="px-3 py-4 text-sm text-gray-500">${rule}</td>
                                             <td class="px-3 py-4 text-sm">${mode}</td>
                                             <td class="py-4 pl-3 pr-4 text-right text-sm font-medium sm:pr-0">
-                                                <button class="text-indigo-600 hover:text-indigo-900" data-id="${dir.id}" onclick="window.app.openModal(this.dataset.id)">Edit</button>
-                                                <button class="text-red-600 hover:text-red-900 ml-4" data-id="${dir.id}" onclick="window.app.deleteDirectory(this.dataset.id)">Delete</button>
+                                                <button class="text-indigo-600 hover:text-indigo-900" data-id="${conf_file.id}" onclick="window.app.openModal(this.dataset.id)">Edit</button>
+                                                <button class="text-red-600 hover:text-red-900 ml-4" data-id="${conf_file.id}" onclick="window.app.deleteDirectory(this.dataset.id)">Delete</button>
                                             </td>
                                           </tr>`;
                         });
@@ -448,10 +450,11 @@
                         modalSizeGroup.classList.remove('hidden');
                     } else {
                         // Mode Edit
-                        const dir = currentConfig.find(d => d.id === filename);
-                        if (!dir) { alert("Error: could not find config to edit."); return; }
-                        modalTitle.textContent = `Edit Config: ${dir.id}`;
-                        modalFilename.value = dir.id;
+                        const confFile = currentConfig.find(d => d.id === filename);
+                        if (!confFile) { alert("Error: could not find config to edit."); return; }
+                        const dir = confFile.config;
+                        modalTitle.textContent = `Edit Config: ${confFile.id}`;
+                        modalFilename.value = confFile.id;
                         modalFilename.disabled = true; // Tidak bisa ganti nama file
                         modalPath.value = dir.target_directory;
                         modalMethod.value = dir.monitor_method;
@@ -491,8 +494,8 @@
                         remove: modalRemove.checked
                     };
                     
-                    if (!filename || !filename.endsWith('.yaml')) {
-                        modalError.textContent = "Filename is required and must end in .yaml";
+                    if (!filename || !filename.endsWith('.yaml') && !filename.endsWith('.yml')) {
+                        modalError.textContent = "Filename is required and must end in .yaml or .yml";
                         modalError.classList.remove('hidden');
                         return;
                     }
